@@ -28,10 +28,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends openscad xvfb
 
+      # apt ships 2021.01, which predates the Manifold backend and evaluates
+      # the spirograph sheet with CGAL. The layout check times out against it
+      # and reports nothing, so it gets a current build of its own.
+      - name: Install a Manifold-capable OpenSCAD for the layout check
+        run: sudo snap install openscad-nightly
+
       - name: Install
         run: pip install -e ".[verify]"
 
-      - name: Rolling interference check
+      - name: Rolling interference and layout checks
+        env:
+          OPENSCAD_BIN: /snap/bin/openscad-nightly
         run: cadloop-verify
 
       - name: Smoke test, both servers over MCP stdio

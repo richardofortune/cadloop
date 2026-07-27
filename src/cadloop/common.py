@@ -28,7 +28,18 @@ def safe_path(root: Path, rel: str) -> Path:
 def find_binary(env_var: str, names: list[str], candidates: list[str]) -> str:
     env = os.environ.get(env_var)
     if env:
-        return env
+        # An override that points at nothing is worth saying out loud. Handed
+        # back unchecked it surfaces later as a FileNotFoundError from
+        # subprocess, naming the path but not the variable that supplied it.
+        p = Path(env).expanduser()
+        if p.exists():
+            return str(p)
+        found = shutil.which(env)
+        if found:
+            return found
+        raise RuntimeError(
+            f"{env_var} is set to {env!r}, which is not an executable here. "
+            f"Unset it to auto-detect.")
     for n in names:
         found = shutil.which(n)
         if found:
