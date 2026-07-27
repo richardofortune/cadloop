@@ -1,0 +1,118 @@
+{
+  "$comment": "How the cadloop walkthrough looks. Colours match the page, which takes them from the tools: OpenSCAD renders in that blue, and red means one thing only, interference. Nothing here says what happens; that lives in the screenplay.",
+
+  "pace": 1,
+
+  "timing": {
+    "mode": "caption",
+    "readingSpeed": 22,
+    "minCaption": 900,
+    "leadIn": 600,
+    "beatOut": 800,
+    "typeDelay": 24,
+    "glideDefault": 650,
+    "settle": 250
+  },
+
+  "caption": {
+    "preset": "docs",
+
+    "position": "bottom-center",
+    "height": 54,
+    "padding": "12px 22px",
+
+    "font": "-apple-system,BlinkMacSystemFont,sans-serif",
+    "fontWeight": 500,
+    "size": 18,
+    "lineHeight": 1.35,
+    "uppercase": false,
+    "italic": false,
+
+    "color": "#E6EAF2",
+    "backgroundColor": "#0C111A",
+    "backgroundOpacity": 100,
+    "outline": false,
+    "outlineColor": "#000000",
+    "fadeDuration": 0.2,
+
+    "caret": "▍",
+    "showChip": true,
+
+    "activeWordHighlight": false,
+    "highlightColor": "#E8A33D",
+    "highlightStyle": "color",
+    "wordTransitionDuration": 0.25,
+
+    "variants": {
+      "warn":  { "backgroundColor": "#2A1210", "color": "#FF6B60" },
+      "aside": { "color": "#8792A6", "showChip": false, "italic": true },
+      "code":  { "font": "ui-monospace,Menlo,Consolas,monospace", "size": 16 }
+    }
+  },
+
+  "presenter": {
+    "show": false,
+    "corner": "bottom-right",
+    "size": 140,
+    "shape": "circle",
+    "margin": 22,
+    "ring": true,
+    "ringColor": "#ffffff",
+    "ringWidth": 3,
+    "shadow": true,
+    "label": true
+  },
+
+  "cursor": {
+    "show": true,
+    "size": 22,
+    "fill": "#0E131C",
+    "stroke": "#E6EAF2",
+    "click": {
+      "show": true,
+      "colour": "#E8A33D",
+      "from": 14,
+      "to": 62,
+      "ms": 520,
+      "width": 3,
+      "dot": true,
+      "dotTo": 34,
+      "rings": 2
+    }
+  },
+
+  "steps": {
+    "show": false,
+    "corner": "top",
+    "margin": 16,
+    "bg": "rgba(15,23,42,.82)",
+    "ink": "#E5E7EB",
+    "active": "#E8A33D",
+    "done": "#5BD6A0"
+  },
+
+  "transition": {
+    "curtain": "#1B2434",
+    "fadeMs": 320,
+    "titleFont": "600 22px ui-monospace,SF Mono,monospace",
+    "titleInk": "#E6EAF2"
+  },
+
+  "encode": {
+    "$comment": "The gif is a README hero, so it trades a little sharpness for weight: 10fps at 760px keeps it small enough to load on a phone. The mp4 stays full size.",
+    "viewport": { "width": 1000, "height": 700 },
+    "subtitles": ["srt", "vtt"],
+    "outputs": [
+      {
+        "name": "gif",
+        "ext": "gif",
+        "args": "-vf \"fps=10,scale=760:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=96[p];[b][p]paletteuse=dither=bayer:bayer_scale=5\" -loop 0"
+      },
+      {
+        "name": "mp4",
+        "ext": "mp4",
+        "args": "-vf \"scale=1000:-2\" -c:v libx264 -pix_fmt yuv420p -crf 23 -movflags +faststart"
+      }
+    ]
+  }
+}

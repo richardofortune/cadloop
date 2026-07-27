@@ -1,0 +1,62 @@
+{
+  "title": "cadloop, the step neither tool does",
+  "slug": "cadloop",
+  "cuts": {
+    "full": { "pace": 1 },
+    "hero": { "pace": 0.9 }
+  },
+  "cast": {
+    "host": { "kind": "human", "name": "Rich", "bg": "#5B8DEF", "ink": "#0E131C" }
+  },
+  "set": {
+    "servers": [
+      { "cmd": "python3", "args": ["-m", "http.server", "8144"], "cwd": "." }
+    ],
+    "waitFor": ["http://localhost:8144/index.html"]
+  },
+  "scenes": [
+    {
+      "id": "loop",
+      "beats": [
+        { "do": "goto", "url": "http://localhost:8144/index.html", "settle": 700 },
+        { "do": "card", "ms": 1900, "lines": [
+          { "text": "cadloop", "font": "700 38px ui-monospace,SF Mono,monospace" },
+          { "text": "OpenSCAD to G-code, no GUI", "dim": true,
+            "font": "400 18px -apple-system,sans-serif" }
+        ] },
+
+        { "do": "actor", "who": "host" },
+        { "do": "say", "text": "A model writes OpenSCAD, then has to trust it." },
+
+        { "cuts": ["full"], "do": "say", "text": "Six steps get you from source to G-code." },
+        { "cuts": ["full"], "do": "say", "text": "The first two never build geometry, so they're quick." },
+        { "cuts": ["full"], "do": "click", "to": { "role": "button", "name": "echo" }, "ms": 620, "settle": 320 },
+        { "cuts": ["full"], "do": "say", "text": "These are dimensions the model worked out itself." },
+        { "cuts": ["full"], "do": "hold", "ms": 500 },
+        { "cuts": ["full"], "do": "click", "to": { "role": "button", "name": "preview" }, "ms": 600, "settle": 380 },
+        { "cuts": ["full"], "do": "say", "text": "Then it looks at what it built." },
+        { "cuts": ["full"], "do": "hold", "ms": 900 },
+
+        { "do": "say", "text": "Every quick check passes on this next part.", "as": "aside" },
+        { "do": "click", "to": { "role": "button", "name": "verify" }, "ms": 640, "settle": 420 },
+        { "do": "say", "text": "Both wheels are clean meshes. Both fit the bed." },
+        { "do": "hold", "ms": 650 },
+        { "do": "say", "text": "The left one digs into the ring teeth as it rolls." },
+        { "do": "hold", "ms": 1000 },
+        { "do": "say", "text": "Almost four square millimetres of solid, into solid.", "as": "warn" },
+        { "do": "hold", "ms": 900 },
+        { "do": "say", "text": "It would have sliced and printed without a word." },
+        { "do": "hold", "ms": 750 },
+
+        { "cuts": ["full"], "do": "click", "to": { "role": "button", "name": "check_bed_fit" }, "ms": 620, "settle": 380 },
+        { "cuts": ["full"], "do": "say", "text": "The bed check reads the printer's own profile." },
+        { "cuts": ["full"], "do": "hold", "ms": 900 },
+        { "cuts": ["full"], "do": "click", "to": { "role": "button", "name": "verify" }, "ms": 600, "settle": 400 },
+
+        { "do": "say", "text": "OpenSCAD gives you five of these six steps." },
+        { "do": "say", "text": "The one that catches a bad part is yours to write." },
+        { "do": "hold", "ms": 1500 }
+      ]
+    }
+  ]
+}

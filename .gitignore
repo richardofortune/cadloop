@@ -6,7 +6,14 @@ dist/
 .claude/
 .vscode/
 .DS_Store
-out/
+
+# the Makefile's render workspace, at the repo root only
+/out/
 *.stl
 *.gcode
 *.3mf
+
+# Filmed walkthrough: the screenplay and the style are the source, the media is
+# generated. The README hero is the one output that has to be in the repo.
+docs/walkthrough/out/*
+!docs/walkthrough/out/cadloop-hero.gif

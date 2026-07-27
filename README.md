@@ -11,6 +11,13 @@ computed values back out, looks at a render, proves the parts actually work,
 checks they fit the bed, slices them and pulls out the G-code. No GUI at any
 point.
 
+![A walkthrough of the loop, ending on the verifier catching a wheel that jams](https://raw.githubusercontent.com/richardofortune/cadloop/main/docs/walkthrough/out/cadloop-hero.gif)
+
+*Every number in that walkthrough is real output. The failing wheel is a real
+measurement, not an illustration. How it's built and where each number comes
+from is in
+[docs/walkthrough](https://github.com/richardofortune/cadloop/tree/main/docs/walkthrough).*
+
 ```text
   write .scad
       |

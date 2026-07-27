@@ -47,5 +47,6 @@ packages = ["src/cadloop"]
 
 [tool.hatch.build.targets.sdist]
 # Ship the source, the worked example and the tests. Leave local editor and
-# agent state out of the release.
-exclude = [".claude", ".vscode", ".github", "out", ".venv"]
+# agent state out, and the filmed walkthrough too: it is a couple of megabytes
+# of media that the README already links to on GitHub.
+exclude = [".claude", ".vscode", ".github", "out", ".venv", "/docs/**"]
