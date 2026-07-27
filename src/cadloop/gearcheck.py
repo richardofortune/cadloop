@@ -363,22 +363,26 @@ def _openscad() -> str:
 
 
 def _part_volume(binary: str, scad: Path, part: str, out: Path,
-                 timeout_s: int) -> float | None:
-    """Volume of one group, or None if this OpenSCAD could not render it.
+                 timeout_s: float) -> tuple[float | None, str]:
+    """Volume of one group, or (None, why) if it could not be rendered.
 
     The labels are switched off. They are debossed text, they cost more than
     the gears themselves on the older CGAL backend, and where a part sits on
     the sheet does not depend on them."""
+    name = Path(binary).name
     stl = out / f"{part}.stl"
     r = _sh([binary, "-o", str(stl),
              "-D", f'part="{part}"',
              "-D", "label_holes=false",
              "-D", "label_wheels=false",
              str(scad)], timeout_s)
-    if r["timed_out"] or not stl.exists():
-        return None
+    if r["timed_out"]:
+        return None, f"{name} did not render {part!r} within {timeout_s:g}s"
+    if not stl.exists():
+        return None, (f"{name} exited {r['returncode']} without writing "
+                      f"{part!r}: {_tail(r['log'], 200).strip() or 'no output'}")
     mesh = measure_stl(stl)
-    return float(mesh["volume_mm3"]) if mesh.get("triangles") else 0.0
+    return (float(mesh["volume_mm3"]) if mesh.get("triangles") else 0.0), ""
 
 
 def _tail(log: str, n: int = 400) -> str:
@@ -397,20 +401,19 @@ def check_layout(scad: Path, timeout_s: int = 240) -> dict:
     and take far longer than the Manifold backend that replaced it. That
     comes back as skipped rather than as a failure."""
     binary = _openscad()
-    with tempfile.TemporaryDirectory() as tmp:
+    # Beside the model rather than in /tmp: a snap or flatpak OpenSCAD runs
+    # with a private /tmp, so it writes the STL into its own sandbox and we
+    # find nothing at the path we asked for.
+    with tempfile.TemporaryDirectory(dir=scad.parent, prefix=".cadloop-") as tmp:
         out = Path(tmp)
-        union = _part_volume(binary, scad, "all", out, timeout_s)
+        union, why = _part_volume(binary, scad, "all", out, timeout_s)
         if union is None:
-            return {"skipped": True,
-                    "reason": f"{Path(binary).name} did not render the sheet "
-                              f"within {timeout_s}s"}
+            return {"skipped": True, "reason": why}
         groups = {}
         for g in LAYOUT_GROUPS:
-            v = _part_volume(binary, scad, g, out, timeout_s)
+            v, why = _part_volume(binary, scad, g, out, timeout_s)
             if v is None:
-                return {"skipped": True,
-                        "reason": f"{Path(binary).name} did not render "
-                                  f"{g!r} within {timeout_s}s"}
+                return {"skipped": True, "reason": why}
             groups[g] = v
     total = sum(groups.values())
     fused = total - union
