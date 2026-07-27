@@ -1,0 +1,51 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.richardofortune/cadloop-openscad",
+  "title": "cadloop OpenSCAD",
+  "description": "Compile OpenSCAD, read computed values, preview and measure the mesh, without a GUI.",
+  "version": "0.1.0",
+  "websiteUrl": "https://github.com/richardofortune/cadloop",
+  "repository": {
+    "url": "https://github.com/richardofortune/cadloop",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "cadloop",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--from",
+          "value": "cadloop"
+        },
+        {
+          "type": "positional",
+          "value": "cadloop-openscad"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "OPENSCAD_WORKSPACE",
+          "description": "The only directory this server reads and writes. Defaults to ~/cad.",
+          "isRequired": false
+        },
+        {
+          "name": "OPENSCAD_BIN",
+          "description": "Path to the openscad binary. Auto-detected from PATH and the usual install locations if unset.",
+          "isRequired": false
+        },
+        {
+          "name": "OPENSCAD_TIMEOUT",
+          "description": "Seconds before a run is killed. Defaults to 300.",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

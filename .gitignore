@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+*.egg-info/
+.claude/
+.vscode/
+.DS_Store
+out/
+*.stl
+*.gcode
+*.3mf

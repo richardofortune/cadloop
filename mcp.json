@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "openscad": {
+      "command": "cadloop-openscad",
+      "env": {
+        "OPENSCAD_WORKSPACE": "/Users/you/cad",
+        "OPENSCAD_BIN": "/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD"
+      }
+    },
+    "slicer": {
+      "command": "cadloop-slicer",
+      "env": {
+        "SLICER_WORKSPACE": "/Users/you/cad",
+        "SLICER_BIN": "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer"
+      }
+    }
+  }
+}

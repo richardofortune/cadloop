@@ -1,0 +1,7 @@
+{
+  "type": "machine",
+  "name": "Mock Bed Child",
+  "printer_model": "Mock Child",
+  "from": "system",
+  "inherits": "Mock Bed Base"
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.richardofortune/cadloop-slicer",
+  "title": "cadloop Slicer",
+  "description": "Find printer profiles, check bed fit, slice to .gcode.3mf and extract the G-code.",
+  "version": "0.1.0",
+  "websiteUrl": "https://github.com/richardofortune/cadloop",
+  "repository": {
+    "url": "https://github.com/richardofortune/cadloop",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "cadloop",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--from",
+          "value": "cadloop"
+        },
+        {
+          "type": "positional",
+          "value": "cadloop-slicer"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SLICER_WORKSPACE",
+          "description": "The only directory this server reads and writes. Defaults to ~/cad.",
+          "isRequired": false
+        },
+        {
+          "name": "SLICER_BIN",
+          "description": "Path to the slicer binary. Auto-detected if unset. Creality Print's CLI does not work headless on macOS; prefer OrcaSlicer, Bambu Studio or ElegooSlicer there.",
+          "isRequired": false
+        },
+        {
+          "name": "SLICER_PROFILE_DIRS",
+          "description": "Extra profile roots, os.pathsep separated. Added to the auto-detected roots rather than replacing them.",
+          "isRequired": false
+        },
+        {
+          "name": "SLICER_TIMEOUT",
+          "description": "Seconds before a slice is killed. Defaults to 600.",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}
