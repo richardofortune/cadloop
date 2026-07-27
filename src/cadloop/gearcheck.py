@@ -83,7 +83,6 @@ ring_cut = gear(NR_IN, add_c=1.0 + CLEAR, ded_c=1.0)
 ring = ring_body.difference(ring_cut)
 
 
-WHEELS = [24, 30, 32, 36, 40, 45, 48, 52, 56, 63, 72, 80]
 
 
 P = math.pi * M
@@ -214,7 +213,6 @@ def build(kind, params, bl=BACKLASH):
 # rolling test
 # ---------------------------------------------------------------
 
-NR_IN, NR_OUT = 96, 105
 RING = gear(NR_OUT).difference(gear(NR_IN, add_c=1.0 + CLEAR, ded_c=1.0))
 R_IN = M * NR_IN / 2
 R_OUT = M * NR_OUT / 2
@@ -289,6 +287,58 @@ def _roll_circular(w, rp, steps, phase):
         if worst > 1.0:
             break
     return worst
+
+
+# ---------------------------------------------------------------
+# what each wheel draws
+# ---------------------------------------------------------------
+
+# A pen in a wheel of r teeth rolling in a ring of R traces a figure with
+# R / gcd(R, r) lobes, closing after r / gcd(R, r) circuits of the ring. So
+# the tooth counts decide the pattern before any geometry exists, and a
+# wheel sharing most of its factors with the ring draws something plain.
+# A ratio of exactly 2 is the degenerate case: the pen traces an ellipse.
+
+
+def _nc_teeth(kind, params) -> int:
+    """Tooth count of a non-circular wheel, without building its teeth."""
+    if kind == "polar":
+        R, e, k = params
+        f = polar_curve(R, e, k)
+    else:
+        a, b = params
+        f = ellipse_curve(a, b)
+    return int(round(arclen_table(f)[-1] / P))
+
+
+def patterns() -> dict[str, list[dict]]:
+    """What every wheel in the set draws, in each ring."""
+    parts = [(f"{t}T", t) for t in WHEELS]
+    parts += [(name, _nc_teeth(kind, prm))
+              for name, (kind, prm) in SHAPES.items()]
+    out = {}
+    for label, R in (("main ring", NR_IN), ("outer ring", NR_OUT)):
+        rows = []
+        for name, r in parts:
+            g = math.gcd(R, r)
+            rows.append({"part": name, "teeth": r, "gcd": g,
+                         "lobes": R // g, "circuits": r // g,
+                         "degenerate": R // g <= 2})
+        rows.sort(key=lambda x: (x["lobes"], x["teeth"]))
+        out[label] = rows
+    return out
+
+
+def print_patterns() -> None:
+    for label, R in (("main ring", NR_IN), ("outer ring", NR_OUT)):
+        rows = patterns()[label]
+        print(f"\n{label}, {R} teeth")
+        print(f"  {'part':>8}  {'teeth':>5}  {'lobes':>5}  {'circuits':>8}")
+        for r in rows:
+            note = ("  draws ellipses only" if r["degenerate"]
+                    else "  plain" if r["lobes"] <= 8 else "")
+            print(f"  {r['part']:>8}  {r['teeth']:5d}  {r['lobes']:5d}  "
+                  f"{r['circuits']:8d}{note}")
 
 
 # ---------------------------------------------------------------
@@ -389,7 +439,13 @@ def main() -> int:
                     help="skip the rolling interference check")
     ap.add_argument("--skip-layout", action="store_true",
                     help="skip the layout collision check")
+    ap.add_argument("--patterns", action="store_true",
+                    help="show what each wheel draws in each ring, and exit")
     args = ap.parse_args()
+
+    if args.patterns:
+        print_patterns()
+        return 0
 
     bad = 0
 

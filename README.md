@@ -139,6 +139,35 @@ renders the sheet and each of its groups and compares the union against the
 sum, which is the only place the collision shows up. It needs OpenSCAD and
 skips without one; `--skip-layout` and `--skip-mesh` run one half alone.
 
+## What the tooth counts decide
+
+A pen in a wheel of `r` teeth rolling in a ring of `R` traces a figure with
+`R / gcd(R, r)` lobes, closing after `r / gcd(R, r)` circuits. The pattern is
+settled by the tooth counts before any geometry exists, so `cadloop-verify
+--patterns` reads it straight off the set:
+
+```console
+$ cadloop-verify --patterns
+
+main ring, 96 teeth
+      part  teeth  lobes  circuits
+       48T     48      2         1  draws ellipses only
+       32T     32      3         1  plain
+       24T     24      4         1  plain
+...
+   trefoil     23     96        23
+```
+
+96 is 2^5 x 3, so it shares factors with most of an even wheel set and half
+these wheels draw eight lobes or fewer. The 48 tooth wheel is exactly half the
+ring, which is the degenerate ratio: its pen traces an ellipse and nothing
+else. The outer ring, 105 = 3 x 5 x 7, behaves far better, and the trefoil at
+23 teeth is coprime to both rings, which is what makes it the richest wheel in
+the set.
+
+This is worth running before choosing tooth counts rather than after printing
+them.
+
 This is model-specific by nature, which is the honest lesson. A manifold mesh
 that fits the bed and slices cleanly can still be a part that does not work.
 Whatever your equivalent of "does it actually roll" is, it belongs in the loop
