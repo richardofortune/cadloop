@@ -106,10 +106,11 @@ chain, and those report `ok: null` with a reason rather than guessing.
 ## The verification step
 
 `cadloop-verify` is the reference example of the third thing you need, and the
-one no general tool provides. For the spirograph it lays each wheel's pitch
-curve onto the ring's pitch circle, walks a full circuit, and measures overlap
-between the two solids at every position. Zero overlap across the whole circuit
-at some meshing phase is the pass condition.
+one no general tool provides. It runs two checks. For the spirograph the first
+lays each wheel's pitch curve onto the ring's pitch circle, walks a full
+circuit, and measures overlap between the two solids at every position. Zero
+overlap across the whole circuit at some meshing phase is the pass condition.
+The second checks the parts are not laid on top of each other on the sheet.
 
 ```console
 $ cadloop-verify
@@ -119,7 +120,24 @@ part     teeth  overlap mm2  result
 trefoil     23     0.000000  pass
 
 15/15 parts mesh cleanly
+
+group        volume mm3
+ring            23939.8
+outer_ring      25652.8
+wheels         212429.8
+shapes          10008.5
+sum            272030.9
+sheet          272030.9
+
+no parts overlap on the sheet
 ```
+
+The second check is the same idea one level up. A sheet that lays two parts
+on top of each other still renders as a clean manifold, still fits the bed,
+and still slices without a word; it just prints as one fused object. So it
+renders the sheet and each of its groups and compares the union against the
+sum, which is the only place the collision shows up. It needs OpenSCAD and
+skips without one; `--skip-layout` and `--skip-mesh` run one half alone.
 
 This is model-specific by nature, which is the honest lesson. A manifold mesh
 that fits the bed and slices cleanly can still be a part that does not work.

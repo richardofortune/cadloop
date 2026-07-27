@@ -1,17 +1,29 @@
-"""Rolling interference check for spirograph wheels inside the ring.
+"""Two checks neither OpenSCAD nor the slicer can do.
 
-Neither OpenSCAD nor the slicer can answer "does this actually roll".
-This does: it lays each wheel's pitch curve onto the ring's pitch
-circle, walks a full circuit, and measures any overlap between the
-two solids. Zero overlap across every position is the pass condition.
+Rolling interference: lays each wheel's pitch curve onto the ring's pitch
+circle, walks a full circuit, and measures any overlap between the two
+solids. Zero overlap across every position is the pass condition.
+
+Layout collision: renders the sheet and each of its groups, and compares
+the union against the sum. A sheet that fuses two parts together still
+renders as a clean manifold, slices without complaint, and prints as one
+object, so nothing downstream catches it.
 
 Needs shapely:  pip install "cadloop[verify]"
+The layout check also needs OpenSCAD, and skips if there is none.
 """
 
-import math, os
+import argparse
+import math
+import os
+import tempfile
+from pathlib import Path
+
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 from shapely import affinity
+
+from .common import find_binary, measure_stl, run as _sh
 M = float(os.environ.get("GEAR_MODULE", "1.5"))
 PA = 20.0
 CLEAR = 0.25
@@ -279,16 +291,119 @@ def _roll_circular(w, rp, steps, phase):
     return worst
 
 
+# ---------------------------------------------------------------
+# layout collision
+# ---------------------------------------------------------------
+
+# The groups the "all" sheet is made of. Their volumes must add up to the
+# volume of the sheet; if two of them overlap, the union swallows the
+# shared material and the sum comes out higher.
+LAYOUT_GROUPS = ["ring", "outer_ring", "wheels", "shapes"]
+
+# A tenth of a cubic millimetre is far below any real collision and well
+# above the noise between two tessellations of the same solid.
+LAYOUT_TOL_MM3 = 0.1
+
+
+def _openscad() -> str:
+    return find_binary(
+        "OPENSCAD_BIN",
+        ["openscad", "openscad-nightly", "OpenSCAD"],
+        ["/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD"])
+
+
+def _part_volume(binary: str, scad: Path, part: str, out: Path,
+                 timeout_s: int) -> float:
+    stl = out / f"{part}.stl"
+    r = _sh([binary, "-o", str(stl), "-D", f'part="{part}"', str(scad)],
+            timeout_s)
+    if r["timed_out"] or not stl.exists():
+        raise RuntimeError(f"rendering {part} failed: {_tail(r['log'])}")
+    mesh = measure_stl(stl)
+    return float(mesh["volume_mm3"]) if mesh.get("triangles") else 0.0
+
+
+def _tail(log: str, n: int = 400) -> str:
+    log = log or ""
+    return log[-n:]
+
+
+def check_layout(scad: Path, timeout_s: int = 600) -> dict:
+    """Render the sheet and its groups, and compare the union to the sum.
+
+    Two parts laid on top of each other still render as a clean manifold
+    and slice without a word, so this is the only place it shows up."""
+    binary = _openscad()
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        union = _part_volume(binary, scad, "all", out, timeout_s)
+        groups = {g: _part_volume(binary, scad, g, out, timeout_s)
+                  for g in LAYOUT_GROUPS}
+    total = sum(groups.values())
+    fused = total - union
+    return {"union_mm3": round(union, 3), "sum_mm3": round(total, 3),
+            "fused_mm3": round(fused, 3), "groups": groups,
+            "pass": abs(fused) < LAYOUT_TOL_MM3}
+
+
+def _find_model() -> Path | None:
+    """The model ships in the repo, not in the wheel, so look for it
+    relative to the working directory."""
+    for c in (Path("models/spirograph.scad"), Path("spirograph.scad")):
+        if c.is_file():
+            return c.resolve()
+    return None
+
+
 def main() -> int:
-    rows = check_all()
-    width = max(len(r["part"]) for r in rows)
-    print(f"{'part':<{width}}  teeth  overlap mm2  result")
+    ap = argparse.ArgumentParser(
+        description="Check the spirograph parts mesh, and that the sheet "
+                    "does not lay any of them on top of each other.")
+    ap.add_argument("--model", type=Path, default=None,
+                    help="path to spirograph.scad (default: ./models/spirograph.scad)")
+    ap.add_argument("--skip-mesh", action="store_true",
+                    help="skip the rolling interference check")
+    ap.add_argument("--skip-layout", action="store_true",
+                    help="skip the layout collision check")
+    args = ap.parse_args()
+
     bad = 0
-    for r in rows:
-        bad += 0 if r["pass"] else 1
-        print(f"{r['part']:<{width}}  {r['teeth']:5d}  {r['overlap_mm2']:11.6f}  "
-              f"{'pass' if r['pass'] else 'FAIL'}")
-    print(f"\n{len(rows) - bad}/{len(rows)} parts mesh cleanly")
+
+    if not args.skip_mesh:
+        rows = check_all()
+        width = max(len(r["part"]) for r in rows)
+        print(f"{'part':<{width}}  teeth  overlap mm2  result")
+        for r in rows:
+            bad += 0 if r["pass"] else 1
+            print(f"{r['part']:<{width}}  {r['teeth']:5d}  {r['overlap_mm2']:11.6f}  "
+                  f"{'pass' if r['pass'] else 'FAIL'}")
+        print(f"\n{len(rows) - bad}/{len(rows)} parts mesh cleanly")
+
+    if not args.skip_layout:
+        print()
+        model = args.model or _find_model()
+        if model is None:
+            print("layout   skip  no spirograph.scad here, pass --model")
+        else:
+            try:
+                binary = _openscad()
+            except RuntimeError:
+                binary = None
+                print("layout   skip  no OpenSCAD found, set OPENSCAD_BIN")
+            if binary is not None:
+                res = check_layout(model)
+                print(f"{'group':<11}  volume mm3")
+                for g, v in res["groups"].items():
+                    print(f"{g:<11}  {v:10.1f}")
+                print(f"{'sum':<11}  {res['sum_mm3']:10.1f}")
+                print(f"{'sheet':<11}  {res['union_mm3']:10.1f}")
+                if res["pass"]:
+                    print("\nno parts overlap on the sheet")
+                else:
+                    bad += 1
+                    print(f"\n{res['fused_mm3']:.1f} mm3 FUSED: parts on the "
+                          f"sheet overlap each other")
+
     return 1 if bad else 0
 
 

@@ -354,10 +354,23 @@ function nc_by_name(nm, i = 0) =
     i >= len(nc_shapes) ? undef
     : nc_shapes[i][0] == nm ? nc_shapes[i] : nc_by_name(nm, i + 1);
 
+// Extents of a non-circular wheel, derived the same way tip_r() is derived
+// for a circular one. The pitch coordinates in nc_shapes are in module
+// units, and each tooth stands one module proud of the pitch curve.
+function nc_rx(sh) = gear_module * (max([ for (t = sh[5]) abs(t[0]) ]) + 1);
+function nc_ry(sh) = gear_module * (max([ for (t = sh[5]) abs(t[1]) ]) + 1);
+
+// Same cumulative spacing as row_x() uses for the circular wheels, so the
+// shapes sit a layout_gap apart whatever their size.
+function nc_x(i) =
+    i == 0 ? nc_rx(nc_shapes[0])
+           : nc_x(i - 1) + nc_rx(nc_shapes[i - 1]) + layout_gap + nc_rx(nc_shapes[i]);
+function nc_w() = nc_x(len(nc_shapes) - 1) + nc_rx(nc_shapes[len(nc_shapes) - 1]);
+function nc_h() = max([ for (s = nc_shapes) nc_ry(s) ]);
+
 module nc_wheels() {
-    x = 0;
     for (i = [0 : len(nc_shapes) - 1])
-        translate([ i * 46, 0 ]) nc_wheel(nc_shapes[i]);
+        translate([ nc_x(i), 0 ]) nc_wheel(nc_shapes[i]);
 }
 
 // ------------------------------------------------------------
@@ -373,6 +386,10 @@ function row_x(row, i) =
            : row_x(row, i - 1) + tip_r(row[i - 1]) + layout_gap + tip_r(row[i]);
 function row_y(k) =
     k == 0 ? -row_r(0) : row_y(k - 1) - row_r(k - 1) - layout_gap - row_r(k);
+// right-hand edge of a row, so anything placed beside it can clear it
+function row_end_x(k) =
+    let (row = row_of(k))
+        row_x(row, len(row) - 1) + tip_r(row[len(row) - 1]);
 
 module wheels() {
     rows = ceil(len(wheel_teeth) / layout_cols);
@@ -423,8 +440,12 @@ else if (part == "shapes")     nc_wheels();
 else if (is_string(part) && !is_undef(nc_by_name(part))) nc_wheel(nc_by_name(part));
 else if (part == "fit_test")   fit_test();
 else {
+    // The shapes continue the first wheel row, to the right of it and at its
+    // centreline. Everything here is derived, so changing gear_module,
+    // wheel_teeth or layout_cols re-packs the sheet without anything colliding.
+    wheels_dy = -ring_outer_r() - layout_gap;
     ring();
     translate([2 * ring_outer_r() + 10, 0]) ring_outer();
-    translate([0, -ring_outer_r() - layout_gap]) wheels();
-    translate([2 * ring_outer_r() + 10, -60]) nc_wheels();
+    translate([0, wheels_dy]) wheels();
+    translate([row_end_x(0) + layout_gap, wheels_dy + row_y(0)]) nc_wheels();
 }
