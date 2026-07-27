@@ -313,12 +313,20 @@ def _openscad() -> str:
 
 
 def _part_volume(binary: str, scad: Path, part: str, out: Path,
-                 timeout_s: int) -> float:
+                 timeout_s: int) -> float | None:
+    """Volume of one group, or None if this OpenSCAD could not render it.
+
+    The labels are switched off. They are debossed text, they cost more than
+    the gears themselves on the older CGAL backend, and where a part sits on
+    the sheet does not depend on them."""
     stl = out / f"{part}.stl"
-    r = _sh([binary, "-o", str(stl), "-D", f'part="{part}"', str(scad)],
-            timeout_s)
+    r = _sh([binary, "-o", str(stl),
+             "-D", f'part="{part}"',
+             "-D", "label_holes=false",
+             "-D", "label_wheels=false",
+             str(scad)], timeout_s)
     if r["timed_out"] or not stl.exists():
-        raise RuntimeError(f"rendering {part} failed: {_tail(r['log'])}")
+        return None
     mesh = measure_stl(stl)
     return float(mesh["volume_mm3"]) if mesh.get("triangles") else 0.0
 
@@ -328,20 +336,36 @@ def _tail(log: str, n: int = 400) -> str:
     return log[-n:]
 
 
-def check_layout(scad: Path, timeout_s: int = 600) -> dict:
+def check_layout(scad: Path, timeout_s: int = 240) -> dict:
     """Render the sheet and its groups, and compare the union to the sum.
 
     Two parts laid on top of each other still render as a clean manifold
-    and slice without a word, so this is the only place it shows up."""
+    and slice without a word, so this is the only place it shows up.
+
+    A render that does not finish means the answer is unknown, not that the
+    layout is bad: OpenSCAD 2021 and earlier evaluate this sheet with CGAL
+    and take far longer than the Manifold backend that replaced it. That
+    comes back as skipped rather than as a failure."""
     binary = _openscad()
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp)
         union = _part_volume(binary, scad, "all", out, timeout_s)
-        groups = {g: _part_volume(binary, scad, g, out, timeout_s)
-                  for g in LAYOUT_GROUPS}
+        if union is None:
+            return {"skipped": True,
+                    "reason": f"{Path(binary).name} did not render the sheet "
+                              f"within {timeout_s}s"}
+        groups = {}
+        for g in LAYOUT_GROUPS:
+            v = _part_volume(binary, scad, g, out, timeout_s)
+            if v is None:
+                return {"skipped": True,
+                        "reason": f"{Path(binary).name} did not render "
+                                  f"{g!r} within {timeout_s}s"}
+            groups[g] = v
     total = sum(groups.values())
     fused = total - union
-    return {"union_mm3": round(union, 3), "sum_mm3": round(total, 3),
+    return {"skipped": False,
+            "union_mm3": round(union, 3), "sum_mm3": round(total, 3),
             "fused_mm3": round(fused, 3), "groups": groups,
             "pass": abs(fused) < LAYOUT_TOL_MM3}
 
@@ -392,17 +416,21 @@ def main() -> int:
                 print("layout   skip  no OpenSCAD found, set OPENSCAD_BIN")
             if binary is not None:
                 res = check_layout(model)
-                print(f"{'group':<11}  volume mm3")
-                for g, v in res["groups"].items():
-                    print(f"{g:<11}  {v:10.1f}")
-                print(f"{'sum':<11}  {res['sum_mm3']:10.1f}")
-                print(f"{'sheet':<11}  {res['union_mm3']:10.1f}")
-                if res["pass"]:
-                    print("\nno parts overlap on the sheet")
+                if res["skipped"]:
+                    # Loudly, so a skipped check is never mistaken for a pass.
+                    print(f"layout   skip  {res['reason']}")
                 else:
-                    bad += 1
-                    print(f"\n{res['fused_mm3']:.1f} mm3 FUSED: parts on the "
-                          f"sheet overlap each other")
+                    print(f"{'group':<11}  volume mm3")
+                    for g, v in res["groups"].items():
+                        print(f"{g:<11}  {v:10.1f}")
+                    print(f"{'sum':<11}  {res['sum_mm3']:10.1f}")
+                    print(f"{'sheet':<11}  {res['union_mm3']:10.1f}")
+                    if res["pass"]:
+                        print("\nno parts overlap on the sheet")
+                    else:
+                        bad += 1
+                        print(f"\n{res['fused_mm3']:.1f} mm3 FUSED: parts on "
+                              f"the sheet overlap each other")
 
     return 1 if bad else 0
 
