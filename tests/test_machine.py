@@ -215,6 +215,43 @@ def test_resolve_recovers_a_complete_triple_shadowed_by_another_root(
     assert out["profiles"]["filament"] == str(crea_filament)
 
 
+def test_binary_prefers_the_stored_record_over_auto_detection(
+        monkeypatch, tmp_path, fake_binary):
+    from cadloop import slicer_server
+
+    monkeypatch.delenv("SLICER_BIN", raising=False)
+    profs = _profiles(tmp_path)
+    rec = {"schema": machine.SCHEMA, "name": "Fixture",
+           "slicer": {"family": "orca", "binary": fake_binary, "version": "1.0"},
+           "profiles": profs,
+           "fingerprint": machine.fingerprint(fake_binary, "1.0", profs)}
+    machine.save(rec)
+
+    # find_binary would raise (nothing on PATH or in _BIN_CANDIDATES in a
+    # test environment), so the record winning is the only way this returns.
+    monkeypatch.setattr(slicer_server, "find_binary",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("auto-detection should not run")))
+    assert slicer_server._binary() == fake_binary
+
+
+def test_slicer_bin_still_beats_the_stored_record(
+        monkeypatch, tmp_path, fake_binary):
+    from cadloop import slicer_server
+
+    profs = _profiles(tmp_path)
+    rec = {"schema": machine.SCHEMA, "name": "Fixture",
+           "slicer": {"family": "orca", "binary": fake_binary, "version": "1.0"},
+           "profiles": profs,
+           "fingerprint": machine.fingerprint(fake_binary, "1.0", profs)}
+    machine.save(rec)
+
+    override = tmp_path / "override-slicer"
+    override.write_text("")
+    monkeypatch.setenv("SLICER_BIN", str(override))
+    assert slicer_server._binary() == str(override)
+
+
 def test_prove_reports_a_slicer_that_answers_help_but_cannot_slice(tmp_path):
     import stat
     from cadloop import slicer_server

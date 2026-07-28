@@ -152,6 +152,7 @@ async def test_slicer(ws: Path) -> None:
         "SLICER_WORKSPACE": str(ws),
         "SLICER_BIN": str(MOCK / "slicer.py"),
         "SLICER_PROFILE_DIRS": str(MOCK / "profiles"),
+        "CADLOOP_MACHINE": str(ws / "machine.json"),
     })
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as s:
@@ -255,6 +256,14 @@ async def test_slicer(ws: Path) -> None:
             got = payload(await s.call_tool("check_bed_fit", {
                 "model": "huge.stl", "machine_profile": machine}))
             check("bed fit rejects an oversized part", got.get("ok") is False)
+
+            # With a machine set up, the profile arguments become optional.
+            # This is the whole point: a caller can no longer supply three
+            # profiles that disagree, because it supplies none.
+            got = payload(await s.call_tool("machine_info", {}))
+            check("machine_info answers before setup",
+                  got["ok"] is None and "setup_printer" in got["reason"],
+                  str(got)[:80])
 
 
 def test_model() -> None:

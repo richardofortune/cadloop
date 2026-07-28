@@ -49,10 +49,8 @@ DEFAULT_TIMEOUT = int(os.environ.get("SLICER_TIMEOUT", "600"))
 
 mcp = FastMCP("creality-slicer")
 
-# Orca and its forks come first. Creality Print is last on purpose: its CLI
-# does not work headless on macOS at all, so picking it by default there
-# hands back a binary that segfaults on every call. Set SLICER_BIN to
-# override any of this.
+# Fallback only: used when there is no SLICER_BIN and no stored machine
+# record. Set SLICER_BIN to override any of this.
 _BIN_CANDIDATES = [
     "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
     "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio",
@@ -73,6 +71,22 @@ _BIN_CANDIDATES = [
 # --------------------------------------------------------------------
 
 def _binary() -> str:
+    """The slicer to run: an explicit SLICER_BIN always wins, then the
+    binary the stored machine record proved works, then auto-detection.
+
+    A record only wins if the path it names still exists; otherwise it has
+    nothing to offer over the fallback and auto-detection runs instead."""
+    env = os.environ.get("SLICER_BIN")
+    if env:
+        return find_binary(
+            "SLICER_BIN",
+            ["CrealityPrint", "creality-print", "orca-slicer", "OrcaSlicer"],
+            _BIN_CANDIDATES)
+    rec = _machine.load()
+    if rec:
+        recorded = (rec.get("slicer") or {}).get("binary")
+        if recorded and Path(recorded).exists():
+            return recorded
     return find_binary(
         "SLICER_BIN",
         ["CrealityPrint", "creality-print", "orca-slicer", "OrcaSlicer"],
@@ -157,6 +171,28 @@ def _archive_summary(path: Path) -> dict[str, Any]:
     return out
 
 
+def _active_profiles(machine_profile: str | None = None,
+                     process_profile: str | None = None,
+                     filament_profiles: list[str] | None = None
+                     ) -> tuple[dict[str, Any], str | None]:
+    """Profiles for this call: whatever was passed, then the stored machine.
+
+    Explicit arguments still win, so every 0.1.0 call site keeps working."""
+    rec = _machine.load()
+    warn = _machine.staleness(rec) if rec else None
+    stored = (rec or {}).get("profiles") or {}
+    out = {
+        "machine": machine_profile or stored.get("machine"),
+        "process": process_profile or stored.get("process"),
+        "filament": list(filament_profiles) if filament_profiles
+                    else ([stored["filament"]] if stored.get("filament") else []),
+    }
+    if not out["machine"]:
+        raise RuntimeError(
+            "no printer set up and no machine_profile given. Run setup_printer.")
+    return out, warn
+
+
 # --------------------------------------------------------------------
 # tools
 # --------------------------------------------------------------------
@@ -220,11 +256,14 @@ def model_info(model: str, timeout_s: int | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-def check_bed_fit(model: str, machine_profile: str,
+def check_bed_fit(model: str, machine_profile: str | None = None,
                   margin_mm: float = 3.0) -> dict[str, Any]:
     """Compare an STL's footprint against the machine profile's printable
     area before slicing. The slicer will happily emit out-of-bounds G-code
     without complaining, so this is worth doing first.
+
+    machine_profile defaults to the stored machine record, set up once by
+    setup_printer. Pass it explicitly to check against a different printer.
 
     Rotating 45 degrees in Z is checked too, since a part that misses the
     bed square-on often fits on the diagonal."""
@@ -232,10 +271,13 @@ def check_bed_fit(model: str, machine_profile: str,
     mesh = measure_stl(stl)
     if not mesh.get("triangles"):
         return {"ok": None, "reason": "no geometry in that mesh", "mesh": mesh}
-    bed = bed_of(machine_profile)
+    profs, warn = _active_profiles(machine_profile)
+    rec = _machine.load() or {}
+    bed = ((rec.get("derived") or {}).get("bed")
+           if not machine_profile else {}) or bed_of(profs["machine"])
     if not bed:
         return {"ok": None, "reason": "no printable_area in machine profile",
-                "mesh": mesh}
+                "mesh": mesh, "stale": warn}
     sx, sy, sz = mesh["size_mm"]
     diag = (sx + sy) * 0.70711        # footprint of a 45 degree rotation
     fits = (sx + margin_mm <= bed["x_mm"] and sy + margin_mm <= bed["y_mm"])
@@ -251,16 +293,17 @@ def check_bed_fit(model: str, machine_profile: str,
         "bed": bed,
         "margin_mm": margin_mm,
         "volume_mm3": mesh["volume_mm3"],
+        "stale": warn,
     }
 
 
 @mcp.tool()
 def slice_model(
     models: list[str],
-    machine_profile: str,
-    process_profile: str,
-    filament_profiles: list[str],
-    output: str,
+    machine_profile: str | None = None,
+    process_profile: str | None = None,
+    filament_profiles: list[str] | None = None,
+    output: str | None = None,
     plate: int = 1,
     arrange: int = 1,
     orient: int = 0,
@@ -276,7 +319,11 @@ def slice_model(
 
     machine_profile, process_profile and filament_profiles are paths to
     profile JSONs, as returned by list_profiles. Load order matters: the
-    machine profile is passed before the process profile.
+    machine profile is passed before the process profile. All three default
+    to the stored machine record, set up once by setup_printer, so a normal
+    call needs none of them. output defaults to None only to preserve the
+    published positional parameter order; it is still required and raises
+    if missing.
 
     overrides is a map of any slicer setting key to a value, passed as
     command-line flags. These beat both the profiles and anything embedded
@@ -293,6 +340,9 @@ def slice_model(
     parts fit the bed, so measure them first.
 
     Set dry_run to see the exact command without running it."""
+    if not output:
+        raise ValueError("output is required (it defaults to None only to keep "
+                         "the published positional order)")
     srcs = [_safe(m) for m in models]
     for s in srcs:
         if not s.exists():
@@ -300,8 +350,10 @@ def slice_model(
     dst = _safe(output)
     dst.parent.mkdir(parents=True, exist_ok=True)
 
-    settings = f"{Path(machine_profile).expanduser()};{Path(process_profile).expanduser()}"
-    filaments = ";".join(str(Path(f).expanduser()) for f in filament_profiles)
+    profs, warn = _active_profiles(machine_profile, process_profile,
+                                   filament_profiles)
+    settings = f"{Path(profs['machine']).expanduser()};{Path(profs['process']).expanduser()}"
+    filaments = ";".join(str(Path(f).expanduser()) for f in profs["filament"])
 
     args = ["--slice", str(plate),
             "--load-settings", settings,
@@ -324,7 +376,7 @@ def slice_model(
     args += [str(s) for s in srcs]
 
     if dry_run:
-        return {"dry_run": True, "command": [_binary()] + args}
+        return {"dry_run": True, "command": [_binary()] + args, "stale": warn}
 
     r = _run(args, timeout_s=timeout_s)
     res: dict[str, Any] = {
@@ -335,6 +387,7 @@ def slice_model(
         "output": str(dst) if dst.exists() else None,
         "errors": _errors(r["log"]),
         "log_tail": _tail(r["log"], 2000),
+        "stale": warn,
     }
     if dst.exists() and zipfile.is_zipfile(dst):
         try:
