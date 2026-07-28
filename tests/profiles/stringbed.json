@@ -1,0 +1,6 @@
+{
+  "type": "machine",
+  "name": "String Bed",
+  "printable_area": "0x0,180x0,180x180,0x180",
+  "printable_height": "200"
+}

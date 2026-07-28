@@ -35,7 +35,10 @@ jobs:
         run: sudo snap install openscad-nightly
 
       - name: Install
-        run: pip install -e ".[verify]"
+        run: pip install -e ".[verify,dev]"
+
+      - name: Unit tests
+        run: pytest -q
 
       - name: Rolling interference and layout checks
         env:

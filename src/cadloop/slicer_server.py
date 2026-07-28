@@ -38,6 +38,8 @@ from mcp.server.fastmcp import FastMCP
 
 from .common import (find_binary, measure_stl, run as _sh,
                      safe_path, tail as _tail_, workspace)
+from .profiles import (area_points, bed_of, classify, inherited,
+                       profile_chain, profile_index, profile_roots)
 
 WORKSPACE = workspace("SLICER_WORKSPACE", "cad")
 DEFAULT_TIMEOUT = int(os.environ.get("SLICER_TIMEOUT", "600"))
@@ -62,31 +64,6 @@ _BIN_CANDIDATES = [
     r"C:\Program Files\Creality\Creality Print 6.0\CrealityPrint.exe",
     "/usr/bin/CrealityPrint",
 ]
-
-# Each of these slicers ships its vendor profiles inside the install as well
-# as writing user ones to a config directory, and the bundled set is the one
-# holding the stock machine definitions.
-_PROFILE_CANDIDATES = [
-    "/Applications/OrcaSlicer.app/Contents/Resources/profiles",
-    "/Applications/BambuStudio.app/Contents/Resources/profiles",
-    "/Applications/ElegooSlicer.app/Contents/Resources/profiles",
-    "/Applications/Creality Print.app/Contents/Resources/profiles",
-    "~/Library/Application Support/OrcaSlicer",
-    "~/Library/Application Support/BambuStudio",
-    "~/Library/Application Support/ElegooSlicer",
-    "~/Library/Application Support/Creality/Creality Print",
-    r"C:\Program Files\OrcaSlicer\resources\profiles",
-    r"C:\Program Files\Bambu Studio\resources\profiles",
-    r"C:\Program Files\Creality\Creality Print 7.0\resources\profiles",
-    "~/AppData/Roaming/OrcaSlicer",
-    "~/AppData/Roaming/BambuStudio",
-    "~/AppData/Roaming/Creality/Creality Print",
-    "/usr/share/OrcaSlicer/resources/profiles",
-    "/usr/share/CrealityPrint/resources/profiles",
-    "~/.config/OrcaSlicer",
-    "~/.config/CrealityPrint",
-]
-
 
 # --------------------------------------------------------------------
 # plumbing
@@ -118,125 +95,6 @@ def _errors(log: str) -> list[str]:
         if re.search(r"\b(error|fatal|failed|exception|crash)\b", s, re.I):
             out.append(s)
     return out[-25:]
-
-
-# --------------------------------------------------------------------
-# profiles
-# --------------------------------------------------------------------
-
-def _profile_roots() -> list[Path]:
-    roots: list[Path] = []
-    for raw in os.environ.get("SLICER_PROFILE_DIRS", "").split(os.pathsep):
-        if raw.strip():
-            roots.append(Path(raw.strip()).expanduser())
-    for c in _PROFILE_CANDIDATES:
-        p = Path(c).expanduser()
-        if p.exists():
-            roots.append(p)
-    seen, out = set(), []
-    for r in roots:
-        if r.exists() and str(r) not in seen:
-            seen.add(str(r))
-            out.append(r)
-    return out
-
-
-_PROFILE_INDEX: dict[str, Path] | None = None
-
-
-def _profile_index() -> dict[str, Path]:
-    """Map profile name to path across every root, so `inherits` can be
-    followed. Built once per process; the profile tree does not move."""
-    global _PROFILE_INDEX
-    if _PROFILE_INDEX is None:
-        idx: dict[str, Path] = {}
-        for root in _profile_roots():
-            for p in root.rglob("*.json"):
-                try:
-                    if p.stat().st_size > 2_000_000:
-                        continue
-                    data = json.loads(p.read_text(errors="replace"))
-                except Exception:
-                    continue
-                if isinstance(data, dict) and data.get("name"):
-                    idx.setdefault(str(data["name"]), p)
-        _PROFILE_INDEX = idx
-    return _PROFILE_INDEX
-
-
-def _profile_chain(path: Path, limit: int = 12) -> list[dict[str, Any]]:
-    """A profile followed by its `inherits` ancestors, nearest first.
-
-    Stock profiles are layered: most Bambu machines carry no printable_area
-    of their own and pick it up from a common base."""
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    cur: Path | None = Path(path).expanduser()
-    while cur is not None and len(out) < limit:
-        try:
-            data = json.loads(Path(cur).read_text(errors="replace"))
-        except Exception:
-            break
-        if not isinstance(data, dict):
-            break
-        out.append(data)
-        parent = data.get("inherits")
-        if not parent or str(parent) in seen:
-            break
-        seen.add(str(parent))
-        cur = _profile_index().get(str(parent))
-    return out
-
-
-def _inherited(chain: list[dict[str, Any]], key: str) -> Any:
-    """First non-empty value for key walking up the inheritance chain."""
-    for data in chain:
-        v = data.get(key)
-        if v not in (None, "", [], {}):
-            return v
-    return None
-
-
-def _area_points(raw: Any) -> list[tuple[float, float]]:
-    """printable_area is a list of "XxY" strings in some stock profiles and a
-    single comma-separated string in others. Both ship with Creality Print."""
-    if isinstance(raw, str):
-        items: list[Any] = raw.split(",")
-    elif isinstance(raw, (list, tuple)):
-        items = list(raw)
-    else:
-        return []
-    pts: list[tuple[float, float]] = []
-    for item in items:
-        m = re.findall(r"-?\d+(?:\.\d+)?", str(item))
-        if len(m) >= 2:
-            pts.append((float(m[0]), float(m[1])))
-    return pts
-
-
-def _classify(path: Path) -> dict[str, Any] | None:
-    """Orca-family profile JSONs carry a "type" key: machine, process or
-    filament. Anything else is not a profile we care about."""
-    try:
-        if path.stat().st_size > 2_000_000:
-            return None
-        data = json.loads(path.read_text(errors="replace"))
-    except Exception:
-        return None
-    if not isinstance(data, dict):
-        return None
-    kind = data.get("type")
-    if kind not in ("machine", "process", "filament"):
-        return None
-    return {
-        "kind": kind,
-        "name": data.get("name") or path.stem,
-        "path": str(path),
-        "inherits": data.get("inherits"),
-        "printer_model": data.get("printer_model"),
-        "nozzle": data.get("nozzle_diameter"),
-        "from": data.get("from"),
-    }
 
 
 # --------------------------------------------------------------------
@@ -310,7 +168,7 @@ def slicer_info() -> dict[str, Any]:
     return {
         "binary": _binary(),
         "workspace": str(WORKSPACE),
-        "profile_roots": [str(p) for p in _profile_roots()],
+        "profile_roots": [str(p) for p in profile_roots()],
         "flags": flags,
         "help_text": _tail(r["log"] or "", 6000),
         "default_timeout_s": DEFAULT_TIMEOUT,
@@ -323,9 +181,9 @@ def list_profiles(kind: str = "all", query: str | None = None,
     """Find machine, process and filament profiles. kind is machine, process,
     filament or all. query filters on the profile name, case-insensitive."""
     found: list[dict[str, Any]] = []
-    for root in _profile_roots():
+    for root in profile_roots():
         for p in root.rglob("*.json"):
-            rec = _classify(p)
+            rec = classify(p)
             if not rec:
                 continue
             if kind != "all" and rec["kind"] != kind:
@@ -336,7 +194,7 @@ def list_profiles(kind: str = "all", query: str | None = None,
     found.sort(key=lambda r: (r["kind"], r["name"] or ""))
     return {"count": len(found), "profiles": found[:limit],
             "truncated": len(found) > limit,
-            "roots_searched": [str(p) for p in _profile_roots()]}
+            "roots_searched": [str(p) for p in profile_roots()]}
 
 
 @mcp.tool()
@@ -358,22 +216,6 @@ def model_info(model: str, timeout_s: int | None = None) -> dict[str, Any]:
             "output": _tail(r["log"])}
 
 
-def _bed(machine_profile: str) -> dict[str, Any]:
-    chain = _profile_chain(Path(machine_profile).expanduser())
-    if not chain:
-        return {}
-    pts = _area_points(_inherited(chain, "printable_area"))
-    if len(pts) < 2:
-        return {}
-    xs = [p[0] for p in pts]
-    ys = [p[1] for p in pts]
-    h = _inherited(chain, "printable_height")
-    return {"x_mm": round(max(xs) - min(xs), 2),
-            "y_mm": round(max(ys) - min(ys), 2),
-            "z_mm": float(h) if h else None,
-            "origin": [min(xs), min(ys)]}
-
-
 @mcp.tool()
 def check_bed_fit(model: str, machine_profile: str,
                   margin_mm: float = 3.0) -> dict[str, Any]:
@@ -387,7 +229,7 @@ def check_bed_fit(model: str, machine_profile: str,
     mesh = measure_stl(stl)
     if not mesh.get("triangles"):
         return {"ok": None, "reason": "no geometry in that mesh", "mesh": mesh}
-    bed = _bed(machine_profile)
+    bed = bed_of(machine_profile)
     if not bed:
         return {"ok": None, "reason": "no printable_area in machine profile",
                 "mesh": mesh}

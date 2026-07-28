@@ -1,0 +1,5 @@
+{
+  "type": "machine",
+  "name": "Bed Child",
+  "inherits": "Bed Base"
+}
