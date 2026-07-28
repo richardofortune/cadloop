@@ -436,7 +436,12 @@ def slice_model(
     overrides is a map of any slicer setting key to a value, passed as
     command-line flags. These beat both the profiles and anything embedded
     in a project file. Values go through as strings, which is what the
-    Orca-family CLI expects.
+    Orca-family CLI expects. Write the key either way round: the profiles
+    spell settings with underscores and the CLI only accepts hyphens, so
+    they are hyphenated here. Not every setting is exposed as a flag, and
+    one that is not fails the whole run with "Invalid option", so check a
+    new key with dry_run first. Note the CLI uses the current name rather
+    than the PrusaSlicer one, `layer_change_gcode` rather than `layer_gcode`.
 
     plate 0 slices every plate. arrange 1 packs multiple models onto the
     bed; without it they stack at the origin. Nothing here checks that the
@@ -466,7 +471,10 @@ def slice_model(
     if min_save:
         args.append("--min-save")
     for k, v in (overrides or {}).items():
-        args += [f"--{k.replace('_', '-') if k.startswith('-') else k}", str(v)]
+        # Settings are named with underscores in the profile JSON and with
+        # hyphens on the command line, so take either spelling and emit the
+        # one the CLI accepts. Anything else is rejected as an invalid option.
+        args += [f"--{k.lstrip('-').replace('_', '-')}", str(v)]
     args += list(extra_args or [])
     args += [str(s) for s in srcs]
 

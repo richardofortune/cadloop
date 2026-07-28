@@ -192,6 +192,24 @@ async def test_slicer(ws: Path) -> None:
                   cmd[i + 1] == f"{machine};{process}")
             check("models come last", cmd[-1].endswith("part.stl"))
 
+            # Settings are written with underscores in the profiles but the
+            # CLI only accepts hyphens, and rejects the whole run as an
+            # invalid option otherwise. Both spellings must come out hyphenated.
+            got = payload(await s.call_tool("slice_model", {
+                "models": ["part.stl"], "machine_profile": machine,
+                "process_profile": process, "filament_profiles": [filament],
+                "output": "out/part.gcode.3mf", "dry_run": True,
+                "overrides": {"layer_change_gcode": "G92 E0",
+                              "--sparse-infill-density": "15%"}}))
+            cmd = got["command"]
+            check("overrides are hyphenated for the CLI",
+                  "--layer-change-gcode" in cmd
+                  and "--sparse-infill-density" in cmd
+                  and not any(a.startswith("--") and "_" in a for a in cmd),
+                  str([a for a in cmd if a.startswith("--")][-4:]))
+            check("override values follow their flag",
+                  cmd[cmd.index("--layer-change-gcode") + 1] == "G92 E0")
+
             got = payload(await s.call_tool("slice_model", {
                 "models": ["part.stl"], "machine_profile": machine,
                 "process_profile": process, "filament_profiles": [filament],
