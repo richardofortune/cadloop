@@ -1,1 +1,8 @@
-{"type":"filament","name":"Creality Hyper PLA","from":"system"}
+{
+  "type": "filament",
+  "name": "Hyper PLA @Mock K1 0.4 nozzle",
+  "filament_type": [
+    "PLA"
+  ],
+  "from": "system"
+}

@@ -16,6 +16,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -143,16 +144,41 @@ async def test_openscad(ws: Path) -> None:
             check("workspace guard blocks traversal", blocked)
 
 
+def mock_install(ws: Path) -> tuple[Path, Path]:
+    """A slicer install that exists only for this run: the mock profiles,
+    copied so a test may edit one, and a slicer config naming the presets a
+    user would have selected in the GUI.
+
+    HOME is redirected at the server so adopt() reads this config rather than
+    the developer's own, which is what makes the zero-argument path testable
+    at all. The profile names are unique to the mock, so a real install on
+    the same machine contributes nothing that can be mistaken for it."""
+    profiles = ws / "profiles"
+    shutil.copytree(MOCK / "profiles", profiles)
+    home = ws / "home"
+    selected = json.dumps({"presets": {
+        "machine": "Mock K1 0.4 nozzle",
+        "print": "0.20mm Standard @Mock K1 0.4 nozzle",
+        "filaments": ["Hyper PLA @Mock K1 0.4 nozzle"]}})
+    for rel in ("Library/Application Support/OrcaSlicer", ".config/OrcaSlicer"):
+        d = home / rel
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "OrcaSlicer.conf").write_text(selected)
+    return profiles, home
+
+
 async def test_slicer(ws: Path) -> None:
     print("slicer server")
     stl = ws / "part.stl"
     if not stl.exists():
         stl.write_text(TETRA)
+    prof_dir, home = mock_install(ws)
     params = await session("cadloop.slicer_server", {
         "SLICER_WORKSPACE": str(ws),
         "SLICER_BIN": str(MOCK / "slicer.py"),
-        "SLICER_PROFILE_DIRS": str(MOCK / "profiles"),
+        "SLICER_PROFILE_DIRS": str(prof_dir),
         "CADLOOP_MACHINE": str(ws / "machine.json"),
+        "HOME": str(home),
     })
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as s:
@@ -168,20 +194,21 @@ async def test_slicer(ws: Path) -> None:
 
             # SLICER_PROFILE_DIRS is additive, so a machine with a real slicer
             # installed contributes hundreds of its own profiles here. Only the
-            # mock three are ours to assert on. notaprofile.json must be absent.
+            # run's own copy is ours to assert on. notaprofile.json must be
+            # absent.
             got = payload(await s.call_tool("list_profiles", {"limit": 100000}))
-            mock_dir = str(MOCK / "profiles")
             mine = {Path(p["path"]).name: p["kind"] for p in got["profiles"]
-                    if p["path"].startswith(mock_dir)}
+                    if p["path"].startswith(str(prof_dir))}
             check("profiles classified",
                   mine == {"k1.json": "machine", "std.json": "process",
-                           "pla.json": "filament", "bedstr.json": "machine",
-                           "bedbase.json": "machine", "bedchild.json": "machine"},
+                           "fine.json": "process", "pla.json": "filament",
+                           "bedstr.json": "machine", "bedbase.json": "machine",
+                           "bedchild.json": "machine"},
                   str(sorted(mine.items())))
 
-            machine = str(MOCK / "profiles" / "k1.json")
-            process = str(MOCK / "profiles" / "std.json")
-            filament = str(MOCK / "profiles" / "pla.json")
+            machine = str(prof_dir / "k1.json")
+            process = str(prof_dir / "std.json")
+            filament = str(prof_dir / "pla.json")
 
             got = payload(await s.call_tool("slice_model", {
                 "models": ["part.stl"], "machine_profile": machine,
@@ -236,7 +263,7 @@ async def test_slicer(ws: Path) -> None:
             # machines carry none of their own at all. Both broke check_bed_fit.
             got = payload(await s.call_tool("check_bed_fit", {
                 "model": "part.stl",
-                "machine_profile": str(MOCK / "profiles" / "bedstr.json")}))
+                "machine_profile": str(prof_dir / "bedstr.json")}))
             check("bed read from a comma-separated printable_area",
                   got.get("ok") is True and got["bed"]["x_mm"] == 180.0
                   and got["bed"]["z_mm"] == 200.0,
@@ -244,7 +271,7 @@ async def test_slicer(ws: Path) -> None:
 
             got = payload(await s.call_tool("check_bed_fit", {
                 "model": "part.stl",
-                "machine_profile": str(MOCK / "profiles" / "bedchild.json")}))
+                "machine_profile": str(prof_dir / "bedchild.json")}))
             check("bed inherited from a parent profile",
                   got.get("ok") is True and got["bed"]["x_mm"] == 200.0
                   and got["bed"]["z_mm"] == 180.0,
@@ -257,13 +284,85 @@ async def test_slicer(ws: Path) -> None:
                 "model": "huge.stl", "machine_profile": machine}))
             check("bed fit rejects an oversized part", got.get("ok") is False)
 
-            # With a machine set up, the profile arguments become optional.
-            # This is the whole point: a caller can no longer supply three
-            # profiles that disagree, because it supplies none.
             got = payload(await s.call_tool("machine_info", {}))
             check("machine_info answers before setup",
                   got["ok"] is None and "setup_printer" in got["reason"],
                   str(got)[:80])
+
+            # ---------------------------------------------------------
+            # A1 and A2: the zero-argument path, which is what the branch
+            # is judged on and what nothing automated used to touch. No
+            # profile path, no binary path and no vendor spelling appears
+            # in any call from here down.
+            #
+            # The mock ships two qualities and the config names the coarser
+            # one, which sorts second - so settling for the printer's first
+            # process rather than the configured one is visible here.
+            # ---------------------------------------------------------
+            got = payload(await s.call_tool("setup_printer", {}))
+            check("setup_printer succeeds with no arguments",
+                  got["ok"] is True, str(got.get("reason"))[:120])
+            if got["ok"]:
+                chose = got.get("chose") or {}
+                check("setup names the printer, quality and filament",
+                      chose.get("printer") == "Mock K1 0.4 nozzle"
+                      and chose.get("quality") ==
+                          "0.20mm Standard @Mock K1 0.4 nozzle"
+                      and chose.get("filament") ==
+                          "Hyper PLA @Mock K1 0.4 nozzle",
+                      str(chose))
+                check("setup adopts what the slicer was configured with",
+                      (got.get("adopted") or {}).get("printer")
+                      == "Mock K1 0.4 nozzle",
+                      str(got.get("adopted"))[:100])
+                triple = got["machine"]["profiles"]
+                check("the stored triple comes from one install",
+                      len({str(Path(p).parent) for p in triple.values()}) == 1,
+                      str(sorted(triple.values()))[:120])
+                check("setup proved the printer by slicing",
+                      got["machine"]["proof"]["test_slice_ok"] is True)
+
+            got = payload(await s.call_tool("machine_info", {}))
+            check("machine_info names the printer after setup",
+                  got["ok"] is True and got["name"] == "Mock K1 0.4 nozzle"
+                  and got["derived"]["bed"]["x_mm"] == 220.0,
+                  str(got.get("reason") or got.get("name")))
+
+            got = payload(await s.call_tool("check_bed_fit",
+                                            {"model": "part.stl"}))
+            check("bed fit works with no profile argument",
+                  got.get("ok") is True and got["bed"]["x_mm"] == 220.0,
+                  str(got.get("reason") or got.get("bed")))
+
+            got = payload(await s.call_tool("slice_model", {
+                "models": ["part.stl"], "output": "out/auto.gcode.3mf"}))
+            check("slice works with no profile arguments",
+                  got.get("ok") is True, str(got.get("reason"))[:120])
+            check("the slice used the stored triple",
+                  got.get("command") is not None
+                  and str(prof_dir) in " ".join(got["command"]),
+                  str(got.get("command", []))[:80])
+
+            # A3: a setup that no longer matches reality is refused, not
+            # warned about, and refused before anything is written.
+            (prof_dir / "k1.json").write_text(json.dumps(
+                {"type": "machine", "name": "Mock K1 0.4 nozzle",
+                 "printable_area": ["0x0", "60x0", "60x60", "0x60"],
+                 "printable_height": "60"}))
+            got = payload(await s.call_tool("check_bed_fit",
+                                            {"model": "part.stl"}))
+            check("an edited profile refuses the bed check",
+                  got.get("ok") is None and "machine profile changed"
+                  in (got.get("reason") or ""),
+                  str(got.get("reason"))[:100])
+
+            before = set(p.name for p in (ws / "out").iterdir())
+            got = payload(await s.call_tool("slice_model", {
+                "models": ["part.stl"], "output": "out/stale.gcode.3mf"}))
+            check("an edited profile refuses the slice",
+                  got.get("ok") is None, str(got.get("reason"))[:100])
+            check("the refused slice wrote nothing",
+                  set(p.name for p in (ws / "out").iterdir()) == before)
 
 
 def test_model() -> None:
@@ -292,7 +391,10 @@ def test_model() -> None:
 async def main() -> int:
     test_model()
     with tempfile.TemporaryDirectory() as tmp:
-        ws = Path(tmp)
+        # Resolved: the servers resolve their workspace and their profile
+        # roots, and on macOS /var is a symlink to /private/var, so an
+        # unresolved fixture path matches nothing they report back.
+        ws = Path(tmp).resolve()
         await test_openscad(ws)
         await test_slicer(ws)
     print()

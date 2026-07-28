@@ -632,7 +632,16 @@ def setup_printer(printer: str | None = None,
                        "quality": res["names"]["process"],
                        "filament": res["names"]["filament"]}
 
-    found = _slicers.installed()
+    # An explicit SLICER_BIN wins here as it does everywhere else: proving a
+    # printer against a slicer the caller has told us not to use proves
+    # nothing about the one it will actually run on.
+    try:
+        chosen = find_binary("SLICER_BIN", [], []) if os.environ.get(
+            "SLICER_BIN") else None
+    except RuntimeError as exc:
+        return {"ok": False, "reason": str(exc), **report}
+    found = ([{"family": _slicers.family_of(chosen), "binary": chosen}]
+             if chosen else _slicers.installed())
     if not found:
         return {"ok": None,
                 "reason": "no slicer found in any known install location, so "
