@@ -118,6 +118,33 @@ def test_a_record_path_does_not_get_to_create_directory_trees(
     assert not (tmp_path / "a").exists()
 
 
+def test_a_record_anyone_could_replace_is_refused(tmp_path, monkeypatch):
+    """The record supplies argv[0] to subprocess.run, so a directory other
+    users may write to without the sticky bit that stops them removing our
+    file hands them the program this server runs. /tmp has the sticky bit and
+    is fine; a mode 777 directory is not."""
+    if not hasattr(os, "getuid"):
+        pytest.skip("no POSIX ownership here")
+    open_dir = tmp_path / "open"
+    open_dir.mkdir()
+    open_dir.chmod(0o777)      # mkdir(mode=) is filtered through the umask
+    monkeypatch.setenv("CADLOOP_MACHINE", str(open_dir / "rec.json"))
+    with pytest.raises(machine.RecordError) as exc:
+        machine.load()
+    assert "writable by other users" in str(exc.value)
+
+
+def test_a_sticky_shared_directory_is_still_allowed(tmp_path, monkeypatch):
+    if not hasattr(os, "getuid"):
+        pytest.skip("no POSIX ownership here")
+    sticky = tmp_path / "sticky"
+    sticky.mkdir()
+    sticky.chmod(0o1777)
+    monkeypatch.setenv("CADLOOP_MACHINE", str(sticky / "rec.json"))
+    machine.save({"schema": machine.SCHEMA, "name": "Fixture"})
+    assert machine.load()["name"] == "Fixture"
+
+
 def test_fingerprint_changes_when_a_profile_changes(tmp_path, fake_binary):
     profs = _profiles(tmp_path)
     before = machine.fingerprint(fake_binary, "1.0", profs)

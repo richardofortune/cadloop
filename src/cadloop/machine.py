@@ -114,15 +114,33 @@ endsolid cube
 """
 
 
-def _owned_here(p: Path) -> bool:
-    """Whether this user owns the directory. Windows has no getuid, and on
-    a filesystem that cannot answer, "cannot tell" is not "no"."""
+def _unsafe(p: Path) -> str | None:
+    """Why another user could substitute the record at this path, or None.
+
+    The question is not "do I own this directory" - /tmp is owned by root and
+    is a perfectly ordinary place to put a file - but "could somebody else
+    replace what I put here". That is: a directory anyone may write to
+    without the sticky bit that stops them removing other people's files, a
+    directory belonging to some other unprivileged user, or a file already
+    there that is not ours. Windows has no getuid, and a filesystem that
+    cannot answer gets the benefit of the doubt rather than a refusal."""
     if not hasattr(os, "getuid"):
-        return True
+        return None
+    me = os.getuid()
     try:
-        return p.stat().st_uid == os.getuid()
+        d = p.parent.stat()
     except OSError:
-        return True
+        return None
+    if d.st_uid not in (me, 0):
+        return f"{p.parent} belongs to another user"
+    if (d.st_mode & 0o022) and not (d.st_mode & 0o1000):
+        return f"{p.parent} is writable by other users"
+    try:
+        if p.exists() and p.stat().st_uid != me:
+            return f"{p} belongs to another user"
+    except OSError:
+        return None
+    return None
 
 
 def record_path() -> Path:
@@ -132,9 +150,9 @@ def record_path() -> Path:
     CADLOOP_MACHINE names a file that later supplies an executable path to
     subprocess.run, so it is checked here rather than trusted: resolved so
     that a `..` chain cannot be read one way and written another, required
-    to be a regular file, and required to sit in a directory this user owns.
-    Trees are not created for it either; a variable that can mkdir -p
-    anywhere is a wider hole than the record is worth."""
+    to be a regular file, and required to sit somewhere no other user could
+    substitute it. Trees are not created for it either; a variable that can
+    mkdir -p anywhere is a wider hole than the record is worth."""
     env = os.environ.get("CADLOOP_MACHINE")
     if not env:
         base = os.environ.get("XDG_CONFIG_HOME") or "~/.config"
@@ -148,9 +166,11 @@ def record_path() -> Path:
     if p.exists() and not p.is_file():
         raise RecordError(
             f"CADLOOP_MACHINE={env!r} is not a regular file")
-    if p.parent.exists() and not _owned_here(p.parent):
-        raise RecordError(
-            f"CADLOOP_MACHINE={env!r} is in a directory this user does not own")
+    unsafe = _unsafe(p) if p.parent.exists() else None
+    if unsafe:
+        raise RecordError(f"CADLOOP_MACHINE={env!r} is not safe to trust: "
+                          f"{unsafe}, so another user could replace the record "
+                          f"and choose the program this server runs")
     return p
 
 
