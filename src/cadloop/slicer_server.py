@@ -27,11 +27,8 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-import subprocess
 import tempfile
 import zipfile
-from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -249,9 +246,13 @@ def _active_profiles(machine_profile: str | None = None,
     the cross-vendor triple this record exists to eliminate, arrived at from
     the other direction.
 
-    needs is the kinds this particular call actually consumes, so
-    check_bed_fit is not refused over a stale process profile it never
-    reads."""
+    needs is the kinds this particular call actually consumes. It decides
+    which profiles must be supplied before the record is consulted, and what
+    a refusal names as missing. It does not narrow the staleness check:
+    staleness() reports on every fingerprinted profile, so check_bed_fit is
+    refused over a stale process profile it never reads. That errs towards
+    refusing, which is the safe direction, and a record stale in any part is
+    a record whose printer moved."""
     given = {
         "machine": machine_profile,
         "process": process_profile,
@@ -685,7 +686,14 @@ def setup_printer(printer: str | None = None,
                        cand["binary"], cand["version"], res["profiles"]),
                    "proof": {"test_slice_ok": True,
                              "gcode_bytes": proof.get("bytes")}}
-            _machine.save(rec)
+            try:
+                _machine.save(rec)
+            except _machine.RecordError as exc:
+                # Every read path answers a bad CADLOOP_MACHINE with a reason;
+                # the one path that writes was still raising. Nothing is
+                # stored either way, so failing loudly here costs only the
+                # proof slice already run.
+                return {"ok": None, "reason": str(exc), **report}
             return {"ok": True, "machine": rec, **report}
         report["steps"].append({"binary": cand["binary"], "ok": False,
                                 "reason": proof["reason"]})
