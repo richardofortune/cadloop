@@ -13,6 +13,7 @@ import glob as _glob
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 
 from .common import run as _run
@@ -30,7 +31,14 @@ SLICER_CANDIDATES = [
     r"C:\Program Files\OrcaSlicer\orca-slicer.exe",
     r"C:\Program Files\Bambu Studio\bambu-studio.exe",
     r"C:\Program Files\Creality\Creality Print 7.0\CrealityPrint.exe",
+    r"C:\Program Files\Creality\Creality Print 6.0\CrealityPrint.exe",
 ]
+
+# The same search space by name, for installs that put the binary on PATH
+# rather than in one of the locations above. Also in no significant order.
+SLICER_NAMES = ["OrcaSlicer", "orca-slicer", "BambuStudio", "bambu-studio",
+                "ElegooSlicer", "elegoo-slicer", "CrealityPrint",
+                "creality-print"]
 
 # Without these there is no point going further.
 REQUIRED_FLAGS = ["--slice", "--load-settings", "--load-filaments", "--export-3mf"]
@@ -50,11 +58,16 @@ def family_of(binary: str) -> str:
 
 
 def installed() -> list[dict]:
-    """Every candidate that exists on disk. Says nothing about whether it works."""
+    """Every candidate that exists on disk or on PATH. Says nothing about
+    whether it works: probe() decides that."""
     out, seen = [], set()
-    for c in SLICER_CANDIDATES:
-        p = Path(c).expanduser()
-        if p.exists() and str(p) not in seen:
+    found = [Path(c).expanduser() for c in SLICER_CANDIDATES]
+    for n in SLICER_NAMES:
+        hit = shutil.which(n)
+        if hit:
+            found.append(Path(hit))
+    for p in found:
+        if p.is_file() and str(p) not in seen:
             seen.add(str(p))
             out.append({"family": family_of(str(p)), "binary": str(p)})
     return out
