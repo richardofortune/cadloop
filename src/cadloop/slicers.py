@@ -33,7 +33,7 @@ SLICER_CANDIDATES = [
 ]
 
 # Without these there is no point going further.
-REQUIRED_FLAGS = ["--slice", "--export-3mf"]
+REQUIRED_FLAGS = ["--slice", "--load-settings", "--load-filaments", "--export-3mf"]
 
 _FAMILIES = [("orcaslicer", "orca"), ("orca-slicer", "orca"),
              ("bambustudio", "bambu"), ("bambu-studio", "bambu"),
