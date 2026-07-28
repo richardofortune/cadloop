@@ -18,6 +18,11 @@ from . import profiles as _profiles
 
 SCHEMA = 1
 
+
+class RecordError(RuntimeError):
+    """The record's location or contents cannot be used, and guessing where
+    it should have been is worse than saying so."""
+
 # A 20mm cube, so setup can prove the whole chain works rather than
 # assuming it. Written out at validation time and thrown away after.
 CUBE_STL = """solid cube
@@ -109,20 +114,66 @@ endsolid cube
 """
 
 
+def _owned_here(p: Path) -> bool:
+    """Whether this user owns the directory. Windows has no getuid, and on
+    a filesystem that cannot answer, "cannot tell" is not "no"."""
+    if not hasattr(os, "getuid"):
+        return True
+    try:
+        return p.stat().st_uid == os.getuid()
+    except OSError:
+        return True
+
+
 def record_path() -> Path:
     """Config, not user data, so it lives outside the workspace sandbox and
-    survives changing directory."""
+    survives changing directory.
+
+    CADLOOP_MACHINE names a file that later supplies an executable path to
+    subprocess.run, so it is checked here rather than trusted: resolved so
+    that a `..` chain cannot be read one way and written another, required
+    to be a regular file, and required to sit in a directory this user owns.
+    Trees are not created for it either; a variable that can mkdir -p
+    anywhere is a wider hole than the record is worth."""
     env = os.environ.get("CADLOOP_MACHINE")
-    if env:
-        return Path(env).expanduser()
-    base = os.environ.get("XDG_CONFIG_HOME") or "~/.config"
-    return Path(base).expanduser() / "cadloop" / "machine.json"
+    if not env:
+        base = os.environ.get("XDG_CONFIG_HOME") or "~/.config"
+        return Path(base).expanduser() / "cadloop" / "machine.json"
+    try:
+        p = Path(env).expanduser().resolve()
+    except OSError as exc:
+        raise RecordError(f"CADLOOP_MACHINE={env!r} cannot be resolved: {exc}")
+    if p.is_dir():
+        raise RecordError(f"CADLOOP_MACHINE={env!r} is a directory, not a file")
+    if p.exists() and not p.is_file():
+        raise RecordError(
+            f"CADLOOP_MACHINE={env!r} is not a regular file")
+    if p.parent.exists() and not _owned_here(p.parent):
+        raise RecordError(
+            f"CADLOOP_MACHINE={env!r} is in a directory this user does not own")
+    return p
 
 
 def save(rec: dict[str, Any]) -> Path:
+    """Write the record, atomically. A kill mid-write used to leave a
+    truncated file where the previous good one was."""
     p = record_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(rec, indent=1, sort_keys=True))
+    if not p.parent.exists():
+        if os.environ.get("CADLOOP_MACHINE"):
+            raise RecordError(
+                f"CADLOOP_MACHINE points into {p.parent}, which does not exist. "
+                "Create it, or unset the variable to use the default location.")
+        p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.parent / f".{p.name}.{os.getpid()}.tmp"
+    try:
+        tmp.write_text(json.dumps(rec, indent=1, sort_keys=True))
+        os.replace(tmp, p)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
     return p
 
 
@@ -132,6 +183,8 @@ def load() -> dict[str, Any] | None:
         return None
     try:
         rec = json.loads(p.read_text())
+    except OSError as exc:
+        raise RecordError(f"cannot read the machine record at {p}: {exc}")
     except Exception:
         return None
     return rec if isinstance(rec, dict) else None
