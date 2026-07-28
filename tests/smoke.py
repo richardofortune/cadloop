@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -238,7 +239,31 @@ async def test_slicer(ws: Path) -> None:
             check("bed fit rejects an oversized part", got.get("ok") is False)
 
 
+def test_model() -> None:
+    """The verifier keeps its own copy of the wheel list, because it has to
+    work from a wheel install where the model is not present. Two copies
+    drift, so this is the thing that notices."""
+    print("model")
+    scad = ROOT / "models" / "spirograph.scad"
+    if not scad.is_file():
+        print("  skip  no spirograph.scad in this checkout")
+        return
+    m = re.search(r"^wheel_teeth\s*=\s*\[([^\]]*)\]", scad.read_text(), re.M)
+    if not m:
+        check("wheel_teeth found in the model", False)
+        return
+    from_scad = [int(n) for n in re.findall(r"\d+", m.group(1))]
+    try:
+        from cadloop.gearcheck import WHEELS
+    except ImportError:
+        print("  skip  shapely not installed, cannot compare wheel lists")
+        return
+    check("the verifier's wheel list matches the model's",
+          from_scad == list(WHEELS), f"{from_scad} vs {list(WHEELS)}")
+
+
 async def main() -> int:
+    test_model()
     with tempfile.TemporaryDirectory() as tmp:
         ws = Path(tmp)
         await test_openscad(ws)

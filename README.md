@@ -119,15 +119,15 @@ part     teeth  overlap mm2  result
 ...
 trefoil     23     0.000000  pass
 
-15/15 parts mesh cleanly
+14/14 parts mesh cleanly
 
 group        volume mm3
 ring            23939.8
 outer_ring      25652.8
-wheels         212429.8
-shapes          10008.5
-sum            272030.9
-sheet          272030.9
+wheels         197113.5
+shapes          10078.7
+sum            256784.8
+sheet          256784.8
 
 no parts overlap on the sheet
 ```
@@ -151,19 +151,19 @@ $ cadloop-verify --patterns
 
 main ring, 96 teeth
       part  teeth  lobes  circuits
-       48T     48      2         1  draws ellipses only
        32T     32      3         1  plain
        24T     24      4         1  plain
+       72T     72      4         3  plain
 ...
    trefoil     23     96        23
 ```
 
-96 is 2^5 x 3, so it shares factors with most of an even wheel set and half
-these wheels draw eight lobes or fewer. The 48 tooth wheel is exactly half the
-ring, which is the degenerate ratio: its pen traces an ellipse and nothing
-else. The outer ring, 105 = 3 x 5 x 7, behaves far better, and the trefoil at
-23 teeth is coprime to both rings, which is what makes it the richest wheel in
-the set.
+96 is 2^5 x 3, so it shares factors with most of an even wheel set and a good
+half of these wheels draw eight lobes or fewer. There is no 48 in the set for
+this reason: 48 is exactly half of 96, the degenerate ratio whose pen traces an
+ellipse and nothing else, so it earned no slot. The outer ring, 105 = 3 x 5 x 7,
+behaves far better, and the trefoil at 23 teeth is coprime to both rings, which
+is what makes it the richest wheel in the set.
 
 This is worth running before choosing tooth counts rather than after printing
 them.
@@ -176,7 +176,7 @@ between preview and measure, and you have to write it yourself.
 ## The worked example
 
 `models/spirograph.scad` is the model the loop was built around. A 96 tooth
-internal ring in a flanged body, an outer ring, twelve circular wheels and
+internal ring in a flanged body, an outer ring, eleven circular wheels and
 three non-circular ones (ellipse, egg, trefoil), all involute geared at module
 1.5 with pen holes on a golden-angle spiral.
 
@@ -190,7 +190,7 @@ that shipped are smooth convex curves whose radius of curvature stays inside
 the ring's everywhere.
 
 ```console
-make verify     # rolling interference across all 15 parts
+make verify     # rolling interference and layout, all 14 parts
 make render PART=ring
 make smoke      # both servers, end to end
 ```

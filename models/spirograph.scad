@@ -44,7 +44,11 @@ channel_w     = 4.5;
 channel_d     = 1.4;
 
 /* [Wheels] */
-wheel_teeth     = [24, 30, 32, 36, 40, 45, 48, 52, 56, 63, 72, 80];
+// No 48. It is exactly half the 96 tooth ring, and a wheel at half the ring's
+// count traces an ellipse and nothing else. Run `cadloop-verify --patterns`
+// before adding a count: lobes are ring / gcd(ring, wheel), so a wheel sharing
+// most of its factors with the ring draws something plain.
+wheel_teeth     = [24, 30, 32, 36, 40, 45, 52, 56, 63, 72, 80];
 wheel_thickness = 4;
 pen_hole_d      = 2.4;   // suits a 0.5 to 0.7 mm gel pen. Measure yours
 pen_hole_edge   = 3.0;   // material left outside the outermost hole

@@ -29,7 +29,9 @@ PA = 20.0
 CLEAR = 0.25
 BACKLASH = 0.30
 RES = 8
-WHEELS = [24, 30, 32, 36, 40, 45, 48, 52, 56, 63, 72, 80]
+# Mirrors wheel_teeth in spirograph.scad, and must stay in step with it.
+# No 48: it is half of 96, the ratio whose pen only ever traces an ellipse.
+WHEELS = [24, 30, 32, 36, 40, 45, 52, 56, 63, 72, 80]
 
 
 # --- involute gear geometry, mirroring spirograph.scad ---------------
