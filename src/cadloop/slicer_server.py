@@ -415,17 +415,18 @@ def setup_printer(printer: str | None = None,
     configured, or when nothing is."""
     report: dict[str, Any] = {"adopted": None, "steps": []}
 
-    want_printer, want_filament = printer, filament
+    want_printer, want_filament, want_process = printer, filament, None
     if not want_printer:
         for cand in _slicers.adopt():
             want_printer = cand["printer"]
             want_filament = want_filament or cand["filament"]
+            want_process = cand["process"]
             report["adopted"] = {"from": cand["source"],
                                  "printer": cand["printer"],
                                  "filament": cand["filament"]}
             break
 
-    res = _machine.resolve(want_printer, want_filament)
+    res = _machine.resolve(want_printer, want_filament, process=want_process)
     if not res["ok"]:
         return {"ok": False, "reason": res["reason"],
                 "candidates": res["candidates"], **report}

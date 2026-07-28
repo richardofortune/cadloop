@@ -191,12 +191,70 @@ def _match(kind: str, needle: str) -> list[tuple[str, Path]]:
     return sorted(hits)
 
 
-def resolve(printer: str | None, filament: str | None) -> dict[str, Any]:
+def _root_of(path: Path) -> Path | None:
+    for root in _profiles.profile_roots():
+        try:
+            path.relative_to(root)
+            return root
+        except ValueError:
+            continue
+    return None
+
+
+def _under(root: Path | None,
+          hits: list[tuple[str, Path]]) -> list[tuple[str, Path]]:
+    """Keep only candidates from the same install as the machine profile.
+
+    Two vendors ship profiles under the same name, and their contents differ
+    in ways that decide whether a slice validates at all: Creality's machine
+    profile sets use_relative_e_distances, OrcaSlicer's leaves it unset. A
+    triple assembled across installs is not a configuration anyone tested."""
+    if root is None:
+        return hits
+    out = []
+    for n, p in hits:
+        try:
+            p.relative_to(root)
+            out.append((n, p))
+        except ValueError:
+            pass
+    return out
+
+
+def _named(kind: str, name: str, root: Path) -> Path | None:
+    """A single profile of a kind with exactly this name, read straight off
+    one root rather than through the process-wide profile_index().
+
+    profile_index() keeps one path per name, whichever root it saw first, so
+    it can only ever show one vendor's copy of a machine two vendors ship
+    under the identical name. That is fine for picking a printer, but it
+    means the other vendor's copy - the one that might actually have a
+    matching process and filament - is otherwise invisible."""
+    for p in root.rglob("*.json"):
+        rec = _profiles.classify(p)
+        if rec and rec["kind"] == kind and rec["name"].lower() == name.lower():
+            return p
+    return None
+
+
+def resolve(printer: str | None, filament: str | None,
+           process: str | None = None) -> dict[str, Any]:
     """Turn a printer name into a machine, process and filament triple.
 
     Refuses ambiguity rather than guessing. "K1" matches five printers
     across four nozzle sizes, and picking the first is how the wrong
-    machine gets chosen."""
+    machine gets chosen. The process and filament are also constrained to
+    the same profile root as the chosen machine: two vendors can ship a
+    profile under the identical name, and mixing installs is how a Creality
+    machine profile ends up paired with an OrcaSlicer process profile that
+    was never validated against it.
+
+    profile_index() keeps only one path per name across every root, so when
+    two vendors ship the same machine name it silently hides whichever copy
+    it did not see first - and that copy can be the one with a matching
+    process and filament. If the root that won the name has no complete
+    triple, every other root is checked directly for its own copy of the
+    same machine name before giving up."""
     if not printer:
         return {"ok": False, "reason": "no printer given and none configured",
                 "candidates": []}
@@ -209,23 +267,40 @@ def resolve(printer: str | None, filament: str | None) -> dict[str, Any]:
                 "reason": f"{printer!r} matches {len(machines)} printers",
                 "candidates": [n for n, _ in machines]}
     name, mpath = machines[0]
+    mpath = Path(mpath)
+    root = _root_of(mpath)
 
-    def pick(kind: str, want: str | None) -> str | None:
+    def pick_in(root: Path | None, kind: str, want: str | None) -> str | None:
         if want:
-            hits = _match(kind, want)
+            hits = _under(root, _match(kind, want))
             if len(hits) == 1:
                 return str(hits[0][1])
-        # fall back to anything scoped to this printer
-        hits = [h for h in _match(kind, name)]
+        # fall back to anything scoped to this printer, same install only
+        hits = _under(root, _match(kind, name))
         return str(hits[0][1]) if hits else None
 
-    process = pick("process", None)
-    fil = pick("filament", filament)
-    missing = [k for k, v in (("process", process), ("filament", fil)) if not v]
+    proc = pick_in(root, "process", process)
+    fil = pick_in(root, "filament", filament)
+
+    if (not proc or not fil) and root is not None:
+        for alt_root in _profiles.profile_roots():
+            if alt_root == root:
+                continue
+            alt_machine = _named("machine", name, alt_root)
+            if not alt_machine:
+                continue
+            alt_proc = pick_in(alt_root, "process", process)
+            alt_fil = pick_in(alt_root, "filament", filament)
+            if alt_proc and alt_fil:
+                mpath, root, proc, fil = alt_machine, alt_root, alt_proc, alt_fil
+                break
+
+    missing = [k for k, v in (("process", proc), ("filament", fil)) if not v]
     if missing:
         return {"ok": False,
-                "reason": f"found {name} but no {' or '.join(missing)} profile for it",
+                "reason": f"found {name} but no {' or '.join(missing)} profile "
+                          f"for it under {root or 'its install'}",
                 "candidates": []}
     return {"ok": True, "reason": "", "candidates": [], "printer": name,
-            "profiles": {"machine": str(mpath), "process": process,
+            "profiles": {"machine": str(mpath), "process": proc,
                          "filament": fil}}
