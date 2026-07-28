@@ -58,9 +58,10 @@ pip install -e ".[verify]"
 ```
 
 Needs OpenSCAD on `PATH` or at `OPENSCAD_BIN`, and for slicing, OrcaSlicer,
-Bambu Studio, ElegooSlicer or Creality Print at `SLICER_BIN`. They share a CLI,
-so any of them works, with one exception: Creality Print's CLI is broken
-headless on macOS, covered under testing status below.
+Bambu Studio, ElegooSlicer or Creality Print. They share a CLI, so any of them
+works, and all four are auto-detected along with the profiles they ship. Orca
+and its forks are preferred over Creality Print, whose CLI is broken headless
+on macOS; see testing status below. `SLICER_BIN` overrides the choice.
 
 ## Configure
 
@@ -214,6 +215,10 @@ Against a real install, the OpenSCAD half and `check_bed_fit` are confirmed end
 to end: a 24 tooth wheel rendered out of `spirograph.scad` measures 38.99 mm and
 passes the K1's 220 mm bed. Every flag `slice_model` builds is present in
 Creality Print 7.1.1's `--help`.
+
+The loop is confirmed end to end against OrcaSlicer 2.4.2 on macOS: the 96
+tooth ring slices to 113,808 lines of G-code over 35 layers, a 51 minute print
+using 7.27 m of PLA, with every coordinate inside the bed.
 
 **Creality Print's CLI does not work headless on macOS.** On 7.1.1.4472 under
 macOS 26, every operation except `--help` segfaults, including `--info` with no

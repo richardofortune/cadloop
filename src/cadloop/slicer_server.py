@@ -44,25 +44,47 @@ DEFAULT_TIMEOUT = int(os.environ.get("SLICER_TIMEOUT", "600"))
 
 mcp = FastMCP("creality-slicer")
 
+# Orca and its forks come first. Creality Print is last on purpose: its CLI
+# does not work headless on macOS at all, so picking it by default there
+# hands back a binary that segfaults on every call. Set SLICER_BIN to
+# override any of this.
 _BIN_CANDIDATES = [
+    "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
+    "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio",
+    "/Applications/ElegooSlicer.app/Contents/MacOS/ElegooSlicer",
+    "/usr/bin/orca-slicer",
+    "/usr/bin/OrcaSlicer",
+    r"C:\Program Files\OrcaSlicer\orca-slicer.exe",
+    r"C:\Program Files\Bambu Studio\bambu-studio.exe",
     "/Applications/Creality Print.app/Contents/MacOS/CrealityPrint",
     "/Applications/CrealityPrint.app/Contents/MacOS/CrealityPrint",
-    "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
     r"C:\Program Files\Creality\Creality Print 7.0\CrealityPrint.exe",
     r"C:\Program Files\Creality\Creality Print 6.0\CrealityPrint.exe",
     "/usr/bin/CrealityPrint",
-    "/usr/bin/orca-slicer",
 ]
 
+# Each of these slicers ships its vendor profiles inside the install as well
+# as writing user ones to a config directory, and the bundled set is the one
+# holding the stock machine definitions.
 _PROFILE_CANDIDATES = [
+    "/Applications/OrcaSlicer.app/Contents/Resources/profiles",
+    "/Applications/BambuStudio.app/Contents/Resources/profiles",
+    "/Applications/ElegooSlicer.app/Contents/Resources/profiles",
     "/Applications/Creality Print.app/Contents/Resources/profiles",
-    "~/Library/Application Support/Creality/Creality Print",
     "~/Library/Application Support/OrcaSlicer",
+    "~/Library/Application Support/BambuStudio",
+    "~/Library/Application Support/ElegooSlicer",
+    "~/Library/Application Support/Creality/Creality Print",
+    r"C:\Program Files\OrcaSlicer\resources\profiles",
+    r"C:\Program Files\Bambu Studio\resources\profiles",
     r"C:\Program Files\Creality\Creality Print 7.0\resources\profiles",
+    "~/AppData/Roaming/OrcaSlicer",
+    "~/AppData/Roaming/BambuStudio",
     "~/AppData/Roaming/Creality/Creality Print",
+    "/usr/share/OrcaSlicer/resources/profiles",
     "/usr/share/CrealityPrint/resources/profiles",
-    "~/.config/CrealityPrint",
     "~/.config/OrcaSlicer",
+    "~/.config/CrealityPrint",
 ]
 
 
