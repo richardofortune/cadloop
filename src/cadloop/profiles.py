@@ -39,30 +39,100 @@ PROFILE_CANDIDATES = [
 ]
 
 
+def _resolved(p: Path) -> Path:
+    """expanduser plus resolve, falling back to the literal path when the
+    filesystem will not answer. Roots have to be comparable as strings for
+    containment to mean anything, and a symlinked spelling and a real one are
+    the same install."""
+    try:
+        return Path(p).expanduser().resolve()
+    except OSError:
+        return Path(p).expanduser()
+
+
 def profile_roots() -> list[Path]:
+    """Every directory searched for vendor profiles, resolved and deduped.
+
+    Roots nest: SLICER_PROFILE_DIRS may reasonably name /Applications or
+    ~/Library/Application Support while the auto-detected candidates name
+    individual installs inside them. Both are kept here, because both may
+    hold profiles nothing else would find; telling the installs apart is
+    root_of()'s job, not this one's."""
     roots: list[Path] = []
     for raw in os.environ.get("SLICER_PROFILE_DIRS", "").split(os.pathsep):
         if raw.strip():
-            roots.append(Path(raw.strip()).expanduser())
+            roots.append(_resolved(Path(raw.strip())))
     for c in PROFILE_CANDIDATES:
-        p = Path(c).expanduser()
-        if p.exists():
-            roots.append(p)
+        roots.append(_resolved(Path(c)))
     seen, out = set(), []
     for r in roots:
-        if r.exists() and str(r) not in seen:
+        if str(r) not in seen and r.is_dir():
             seen.add(str(r))
             out.append(r)
     return out
 
 
+def root_of(path: str | Path) -> Path | None:
+    """The install a profile belongs to: the most specific root holding it.
+
+    Returning the first root that happens to contain the path answers
+    "/Applications" whenever that is configured, which makes "are these two
+    profiles from the same install" unanswerable and quietly disables every
+    check built on it. The longest match is the only one that carries
+    information, so that is the answer. None when no root holds the path,
+    which is a "cannot tell", not a "no"."""
+    p = _resolved(Path(path))
+    best: Path | None = None
+    for root in profile_roots():
+        try:
+            p.relative_to(root)
+        except ValueError:
+            continue
+        if best is None or len(str(root)) > len(str(best)):
+            best = root
+    return best
+
+
+def same_install(a: str | Path, b: str | Path) -> bool | None:
+    """Whether two profiles come from one install. None when it cannot be
+    told, because neither path sits under a configured root."""
+    ra, rb = root_of(a), root_of(b)
+    if ra is None or rb is None:
+        return None
+    return str(ra) == str(rb)
+
+
 _INDEX: dict[str, Path] | None = None
+_ROOT_INDEX: dict[str, list[dict[str, Any]]] = {}
 
 
 def reset_cache() -> None:
-    """Drop the memoised name index. Tests and re-setup need this."""
+    """Drop the memoised name index and the per-root ones. Tests and
+    re-setup need this: profiles installed after a failed setup are
+    invisible until the memo is dropped."""
     global _INDEX
     _INDEX = None
+    _ROOT_INDEX.clear()
+
+
+def root_profiles(root: Path) -> list[dict[str, Any]]:
+    """Every profile under one root, classified, sorted by path, memoised.
+
+    profile_index() keeps one path per name across every root, so it can only
+    ever show one vendor's copy of a name two vendors ship. Any question about
+    a single install has to be answered from that install's own files, and
+    answering it by walking the tree afresh each time reads every profile on
+    disk several times over. Sorted so the answer does not depend on the
+    order the filesystem hands directory entries back."""
+    key = str(root)
+    if key not in _ROOT_INDEX:
+        out: list[dict[str, Any]] = []
+        for p in sorted(Path(root).rglob("*.json")):
+            rec = classify(p)
+            if rec:
+                out.append(rec)
+        _ROOT_INDEX[key] = out
+    return _ROOT_INDEX[key]
 
 
 def profile_index() -> dict[str, Path]:

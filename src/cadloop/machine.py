@@ -163,6 +163,8 @@ def staleness(rec: dict[str, Any]) -> str | None:
     binary = (rec.get("slicer") or {}).get("binary")
     if binary and not Path(binary).exists():
         return f"slicer is gone from {binary}"
+    if binary and not Path(binary).is_file():
+        return f"the recorded slicer at {binary} is not a program"
     if binary and fp.get("binary") and fp["binary"] != binary:
         return "slicer binary changed"
     for kind, want in (fp.get("sha256") or {}).items():
@@ -175,30 +177,60 @@ def staleness(rec: dict[str, Any]) -> str | None:
     return None
 
 
+def _rank(hits: list[tuple[str, Path]],
+          needle: str) -> list[tuple[str, Path]]:
+    """An exact name always wins outright, so "Creality K1" does not drag in
+    "Creality K1C". Otherwise sorted, so nothing depends on the order the
+    filesystem hands directory entries back."""
+    exact = [h for h in hits if h[0].lower() == needle.lower()]
+    if exact:
+        return exact[:1]
+    return sorted(hits, key=lambda t: (t[0], str(t[1])))
+
+
 def _match(kind: str, needle: str) -> list[tuple[str, Path]]:
-    """Every profile of a kind whose name contains needle, case-insensitively.
-    An exact name always wins outright, so "Creality K1" does not drag in
-    "Creality K1C"."""
-    hits = []
-    for name, path in _profiles.profile_index().items():
-        rec = _profiles.classify(path)
-        if not rec or rec["kind"] != kind:
-            continue
-        if name.lower() == needle.lower():
-            return [(name, path)]
-        if needle.lower() in name.lower():
-            hits.append((name, path))
-    return sorted(hits)
-
-
-def _root_of(path: Path) -> Path | None:
+    """Every profile of a kind whose name contains needle, across every
+    install, one path per name. Which install won a shared name is decided
+    the same way profile_index() decides it, and undone by the retry in
+    resolve() when the winner turns out to have no matching triple."""
+    seen: set[str] = set()
+    hits: list[tuple[str, Path]] = []
     for root in _profiles.profile_roots():
-        try:
-            path.relative_to(root)
-            return root
-        except ValueError:
+        for rec in _profiles.root_profiles(root):
+            if rec["kind"] != kind:
+                continue
+            name = str(rec["name"])
+            if name in seen:
+                continue
+            if needle.lower() in name.lower():
+                seen.add(name)
+                hits.append((name, Path(rec["path"])))
+    return _rank(hits, needle)
+
+
+def _match_in(root: Path, kind: str, needle: str) -> list[tuple[str, Path]]:
+    """The same question asked of one install's own files.
+
+    _match() keeps one path per name across every root, so the copies it drops
+    are invisible to it - and when two Orca forks ship the same process and
+    filament names, those dropped copies are exactly the ones that complete
+    the other install's triple."""
+    seen: set[str] = set()
+    hits: list[tuple[str, Path]] = []
+    for rec in _profiles.root_profiles(root):
+        if rec["kind"] != kind:
             continue
-    return None
+        name = str(rec["name"])
+        if name in seen:
+            continue
+        if needle.lower() in name.lower():
+            seen.add(name)
+            hits.append((name, Path(rec["path"])))
+    return _rank(hits, needle)
+
+
+def _root_of(path: str | Path) -> Path | None:
+    return _profiles.root_of(path)
 
 
 def _under(root: Path | None,
@@ -208,17 +240,15 @@ def _under(root: Path | None,
     Two vendors ship profiles under the same name, and their contents differ
     in ways that decide whether a slice validates at all: Creality's machine
     profile sets use_relative_e_distances, OrcaSlicer's leaves it unset. A
-    triple assembled across installs is not a configuration anyone tested."""
+    triple assembled across installs is not a configuration anyone tested.
+
+    Same install means "the most specific configured root that holds it is
+    the same one", not "sits somewhere underneath it". Pointing
+    SLICER_PROFILE_DIRS at /Applications makes the second test true for every
+    vendor at once, which is how this guard was reachable around."""
     if root is None:
         return hits
-    out = []
-    for n, p in hits:
-        try:
-            p.relative_to(root)
-            out.append((n, p))
-        except ValueError:
-            pass
-    return out
+    return [(n, p) for n, p in hits if _root_of(p) == root]
 
 
 def _named(kind: str, name: str, root: Path) -> Path | None:
@@ -230,15 +260,21 @@ def _named(kind: str, name: str, root: Path) -> Path | None:
     under the identical name. That is fine for picking a printer, but it
     means the other vendor's copy - the one that might actually have a
     matching process and filament - is otherwise invisible."""
-    for p in root.rglob("*.json"):
-        rec = _profiles.classify(p)
-        if rec and rec["kind"] == kind and rec["name"].lower() == name.lower():
-            return p
+    for rec in _profiles.root_profiles(root):
+        if rec["kind"] == kind and str(rec["name"]).lower() == name.lower():
+            return Path(rec["path"])
     return None
 
 
+class _Conflict(Exception):
+    """A profile the caller asked for by name cannot be honoured here, and
+    quietly using a different one instead is the failure mode this module
+    exists to remove."""
+
+
 def resolve(printer: str | None, filament: str | None,
-           process: str | None = None) -> dict[str, Any]:
+           process: str | None = None,
+           explicit: list[str] | tuple[str, ...] | None = None) -> dict[str, Any]:
     """Turn a printer name into a machine, process and filament triple.
 
     Refuses ambiguity rather than guessing. "K1" matches five printers
@@ -254,53 +290,101 @@ def resolve(printer: str | None, filament: str | None,
     it did not see first - and that copy can be the one with a matching
     process and filament. If the root that won the name has no complete
     triple, every other root is checked directly for its own copy of the
-    same machine name before giving up."""
+    same machine name before giving up.
+
+    explicit names which of "process" and "filament" the caller demanded,
+    rather than read out of the slicer's own configuration. A demanded
+    profile is honoured by name or refused by name; it is never swapped for
+    another one. An adopted one is a starting point - a stored preset can be
+    two changes out of date - so when it cannot be used here the printer's
+    own default is taken instead and the substitution is reported in notes.
+    The default, no explicit list, treats everything given as demanded."""
+    demanded = ("process", "filament") if explicit is None else tuple(explicit)
     if not printer:
         return {"ok": False, "reason": "no printer given and none configured",
-                "candidates": []}
+                "candidates": [], "notes": []}
     machines = _match("machine", printer)
     if not machines:
         return {"ok": False, "reason": f"no printer matches {printer!r}",
-                "candidates": []}
+                "candidates": [], "notes": []}
     if len(machines) > 1:
         return {"ok": False,
                 "reason": f"{printer!r} matches {len(machines)} printers",
-                "candidates": [n for n, _ in machines]}
+                "candidates": [n for n, _ in machines], "notes": []}
     name, mpath = machines[0]
     mpath = Path(mpath)
     root = _root_of(mpath)
 
-    def pick_in(root: Path | None, kind: str, want: str | None) -> str | None:
+    def anywhere(kind: str, needle: str) -> list[tuple[str, Path]]:
+        out: list[tuple[str, Path]] = []
+        for r in _profiles.profile_roots():
+            out += _match_in(r, kind, needle)
+        return out
+
+    def pick_in(root: Path | None, kind: str, want: str | None,
+                notes: list[str]) -> str | None:
         if want:
-            hits = _under(root, _match(kind, want))
+            hits = _under(root, _match_in(root, kind, want) if root
+                          else _match(kind, want))
             if len(hits) == 1:
                 return str(hits[0][1])
+            if kind in demanded:
+                if len(hits) > 1:
+                    raise _Conflict(
+                        f"{kind} {want!r} matches {len(hits)} profiles for "
+                        f"{name}: " + ", ".join(n for n, _ in hits))
+                other = anywhere(kind, want)
+                if other:
+                    where = sorted({str(_root_of(p) or Path(p).parent)
+                                    for _, p in other})
+                    raise _Conflict(
+                        f"{kind} {want!r} is not in the same install as {name} "
+                        f"({root}); it lives under " + ", ".join(where))
+                raise _Conflict(f"no {kind} profile matches {want!r}")
         # fall back to anything scoped to this printer, same install only
-        hits = _under(root, _match(kind, name))
-        return str(hits[0][1]) if hits else None
+        hits = _under(root, _match_in(root, kind, name) if root
+                      else _match(kind, name))
+        if not hits:
+            return None
+        if want:
+            notes.append(f"the configured {kind} {want!r} is not available for "
+                         f"{name}; used {hits[0][0]!r} instead")
+        return str(hits[0][1])
 
-    proc = pick_in(root, "process", process)
-    fil = pick_in(root, "filament", filament)
+    def attempt(root: Path | None,
+                mpath: Path) -> tuple[dict[str, str] | None, str, list[str]]:
+        notes: list[str] = []
+        try:
+            proc = pick_in(root, "process", process, notes)
+            fil = pick_in(root, "filament", filament, notes)
+        except _Conflict as exc:
+            return None, str(exc), notes
+        missing = [k for k, v in (("process", proc), ("filament", fil)) if not v]
+        if missing:
+            return None, (f"found {name} but no {' or '.join(missing)} profile "
+                          f"for it under {root or 'its install'}"), notes
+        return ({"machine": str(mpath), "process": str(proc),
+                 "filament": str(fil)}, "", notes)
 
-    if (not proc or not fil) and root is not None:
+    got, why, notes = attempt(root, mpath)
+    if got is None and root is not None:
         for alt_root in _profiles.profile_roots():
             if alt_root == root:
                 continue
             alt_machine = _named("machine", name, alt_root)
-            if not alt_machine:
+            # A root that only holds this copy because it is an ancestor of
+            # the root that really owns it is not a second install.
+            if not alt_machine or _root_of(alt_machine) != alt_root:
                 continue
-            alt_proc = pick_in(alt_root, "process", process)
-            alt_fil = pick_in(alt_root, "filament", filament)
-            if alt_proc and alt_fil:
-                mpath, root, proc, fil = alt_machine, alt_root, alt_proc, alt_fil
+            alt, alt_why, alt_notes = attempt(alt_root, alt_machine)
+            if alt is not None:
+                got, why, notes, root = alt, "", alt_notes, alt_root
                 break
 
-    missing = [k for k, v in (("process", proc), ("filament", fil)) if not v]
-    if missing:
-        return {"ok": False,
-                "reason": f"found {name} but no {' or '.join(missing)} profile "
-                          f"for it under {root or 'its install'}",
-                "candidates": []}
+    if got is None:
+        return {"ok": False, "reason": why, "candidates": [], "notes": notes}
+    names = {kind: ((_profiles.classify(Path(path)) or {}).get("name")
+                    or Path(path).stem)
+             for kind, path in got.items()}
     return {"ok": True, "reason": "", "candidates": [], "printer": name,
-            "profiles": {"machine": str(mpath), "process": proc,
-                         "filament": fil}}
+            "profiles": got, "names": names, "notes": notes}
