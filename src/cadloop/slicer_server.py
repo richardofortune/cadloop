@@ -36,10 +36,13 @@ from xml.etree import ElementTree
 
 from mcp.server.fastmcp import FastMCP
 
+from . import machine as _machine
+from . import slicers as _slicers
 from .common import (find_binary, measure_stl, run as _sh,
                      safe_path, tail as _tail_, workspace)
 from .profiles import (area_points, bed_of, classify, inherited,
-                       profile_chain, profile_index, profile_roots)
+                       machine_facts, profile_chain, profile_index,
+                       profile_roots)
 
 WORKSPACE = workspace("SLICER_WORKSPACE", "cad")
 DEFAULT_TIMEOUT = int(os.environ.get("SLICER_TIMEOUT", "600"))
@@ -371,6 +374,108 @@ def extract_gcode(archive: str, output: str, plate: int = 1) -> dict[str, Any]:
     return {"entry": want[0], "output": str(dst),
             "bytes": dst.stat().st_size,
             "header": {k.strip(): v.strip() for k, v in list(meta.items())[:20]}}
+
+
+# --------------------------------------------------------------------
+# machine setup
+# --------------------------------------------------------------------
+
+def _prove(binary: str, profs: dict) -> dict[str, Any]:
+    """Slice a 20mm cube. The only check that would have caught a stock
+    printer failing slicer validation, which happens at slice time and is
+    invisible to any static inspection of the profiles."""
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        stl = d / "cube.stl"
+        stl.write_text(_machine.CUBE_STL)
+        out = d / "cube.gcode.3mf"
+        args = ["--slice", "1",
+                "--load-settings", f"{profs['machine']};{profs['process']}",
+                "--load-filaments", profs["filament"],
+                "--export-3mf", str(out), str(stl)]
+        r = _sh([binary] + args, 300)
+        if r["timed_out"]:
+            return {"ok": False, "reason": "test slice timed out"}
+        if not out.exists():
+            return {"ok": False,
+                    "reason": f"test slice exited {r['returncode']}: "
+                              f"{_tail(r['log'], 200).strip() or 'no output'}"}
+        return {"ok": True, "reason": "", "bytes": out.stat().st_size}
+
+
+@mcp.tool()
+def setup_printer(printer: str | None = None,
+                  filament: str | None = None) -> dict[str, Any]:
+    """Work out which printer this is for, once, and remember it.
+
+    Reads what your slicer is already configured with, resolves it to a
+    profile triple, proves the combination by slicing a 20mm cube, and
+    stores the result. Every other tool then works without profile
+    arguments. Pass printer and filament only to override what is
+    configured, or when nothing is."""
+    report: dict[str, Any] = {"adopted": None, "steps": []}
+
+    want_printer, want_filament = printer, filament
+    if not want_printer:
+        for cand in _slicers.adopt():
+            want_printer = cand["printer"]
+            want_filament = want_filament or cand["filament"]
+            report["adopted"] = {"from": cand["source"],
+                                 "printer": cand["printer"],
+                                 "filament": cand["filament"]}
+            break
+
+    res = _machine.resolve(want_printer, want_filament)
+    if not res["ok"]:
+        return {"ok": False, "reason": res["reason"],
+                "candidates": res["candidates"], **report}
+
+    working = []
+    for cand in _slicers.installed():
+        p = _slicers.probe(cand["binary"])
+        report["steps"].append({"binary": cand["binary"], "ok": p["ok"],
+                                "reason": p["reason"], "version": p["version"]})
+        if p["ok"]:
+            working.append({**cand, "version": p["version"]})
+    if not working:
+        return {"ok": False, "reason": "no installed slicer answered --help "
+                                       "with the flags needed to slice", **report}
+
+    for cand in working:
+        proof = _prove(cand["binary"], res["profiles"])
+        if proof["ok"]:
+            facts = machine_facts(res["profiles"]["machine"],
+                                  res["profiles"]["process"],
+                                  res["profiles"]["filament"])
+            rec = {"schema": _machine.SCHEMA, "name": res["printer"],
+                   "slicer": {"family": cand["family"], "binary": cand["binary"],
+                              "version": cand["version"]},
+                   "profiles": res["profiles"], "derived": facts,
+                   "fingerprint": _machine.fingerprint(
+                       cand["binary"], cand["version"], res["profiles"]),
+                   "proof": {"test_slice_ok": True,
+                             "gcode_bytes": proof.get("bytes")}}
+            _machine.save(rec)
+            return {"ok": True, "machine": rec, **report}
+        report["steps"].append({"binary": cand["binary"], "ok": False,
+                                "reason": proof["reason"]})
+
+    return {"ok": False,
+            "reason": "every working slicer failed to slice the test cube",
+            **report}
+
+
+@mcp.tool()
+def machine_info() -> dict[str, Any]:
+    """The printer this workspace is set up for, and whether it is still
+    current. Returns ok: null when setup has never run."""
+    rec = _machine.load()
+    if rec is None:
+        return {"ok": None, "reason": "no printer set up yet, run setup_printer"}
+    why = _machine.staleness(rec)
+    return {"ok": why is None, "reason": why or "",
+            "name": rec.get("name"), "slicer": rec.get("slicer"),
+            "derived": rec.get("derived")}
 
 
 def main() -> None:

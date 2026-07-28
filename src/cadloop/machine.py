@@ -14,7 +14,99 @@ import os
 from pathlib import Path
 from typing import Any
 
+from . import profiles as _profiles
+
 SCHEMA = 1
+
+# A 20mm cube, so setup can prove the whole chain works rather than
+# assuming it. Written out at validation time and thrown away after.
+CUBE_STL = """solid cube
+facet normal 0 0 -1
+  outer loop
+    vertex 0 0 0
+    vertex 20 20 0
+    vertex 20 0 0
+  endloop
+endfacet
+facet normal 0 0 -1
+  outer loop
+    vertex 0 0 0
+    vertex 0 20 0
+    vertex 20 20 0
+  endloop
+endfacet
+facet normal 0 0 1
+  outer loop
+    vertex 0 0 20
+    vertex 20 0 20
+    vertex 20 20 20
+  endloop
+endfacet
+facet normal 0 0 1
+  outer loop
+    vertex 0 0 20
+    vertex 20 20 20
+    vertex 0 20 20
+  endloop
+endfacet
+facet normal 0 -1 0
+  outer loop
+    vertex 0 0 0
+    vertex 20 0 0
+    vertex 20 0 20
+  endloop
+endfacet
+facet normal 0 -1 0
+  outer loop
+    vertex 0 0 0
+    vertex 20 0 20
+    vertex 0 0 20
+  endloop
+endfacet
+facet normal 1 0 0
+  outer loop
+    vertex 20 0 0
+    vertex 20 20 0
+    vertex 20 20 20
+  endloop
+endfacet
+facet normal 1 0 0
+  outer loop
+    vertex 20 0 0
+    vertex 20 20 20
+    vertex 20 0 20
+  endloop
+endfacet
+facet normal 0 1 0
+  outer loop
+    vertex 20 20 0
+    vertex 0 20 0
+    vertex 0 20 20
+  endloop
+endfacet
+facet normal 0 1 0
+  outer loop
+    vertex 20 20 0
+    vertex 0 20 20
+    vertex 20 20 20
+  endloop
+endfacet
+facet normal -1 0 0
+  outer loop
+    vertex 0 20 0
+    vertex 0 0 0
+    vertex 0 0 20
+  endloop
+endfacet
+facet normal -1 0 0
+  outer loop
+    vertex 0 20 0
+    vertex 0 0 20
+    vertex 0 20 20
+  endloop
+endfacet
+endsolid cube
+"""
 
 
 def record_path() -> Path:
@@ -81,3 +173,59 @@ def staleness(rec: dict[str, Any]) -> str | None:
         if _sha(p) != want:
             return f"{kind} profile changed on disk"
     return None
+
+
+def _match(kind: str, needle: str) -> list[tuple[str, Path]]:
+    """Every profile of a kind whose name contains needle, case-insensitively.
+    An exact name always wins outright, so "Creality K1" does not drag in
+    "Creality K1C"."""
+    hits = []
+    for name, path in _profiles.profile_index().items():
+        rec = _profiles.classify(path)
+        if not rec or rec["kind"] != kind:
+            continue
+        if name.lower() == needle.lower():
+            return [(name, path)]
+        if needle.lower() in name.lower():
+            hits.append((name, path))
+    return sorted(hits)
+
+
+def resolve(printer: str | None, filament: str | None) -> dict[str, Any]:
+    """Turn a printer name into a machine, process and filament triple.
+
+    Refuses ambiguity rather than guessing. "K1" matches five printers
+    across four nozzle sizes, and picking the first is how the wrong
+    machine gets chosen."""
+    if not printer:
+        return {"ok": False, "reason": "no printer given and none configured",
+                "candidates": []}
+    machines = _match("machine", printer)
+    if not machines:
+        return {"ok": False, "reason": f"no printer matches {printer!r}",
+                "candidates": []}
+    if len(machines) > 1:
+        return {"ok": False,
+                "reason": f"{printer!r} matches {len(machines)} printers",
+                "candidates": [n for n, _ in machines]}
+    name, mpath = machines[0]
+
+    def pick(kind: str, want: str | None) -> str | None:
+        if want:
+            hits = _match(kind, want)
+            if len(hits) == 1:
+                return str(hits[0][1])
+        # fall back to anything scoped to this printer
+        hits = [h for h in _match(kind, name)]
+        return str(hits[0][1]) if hits else None
+
+    process = pick("process", None)
+    fil = pick("filament", filament)
+    missing = [k for k, v in (("process", process), ("filament", fil)) if not v]
+    if missing:
+        return {"ok": False,
+                "reason": f"found {name} but no {' or '.join(missing)} profile for it",
+                "candidates": []}
+    return {"ok": True, "reason": "", "candidates": [], "printer": name,
+            "profiles": {"machine": str(mpath), "process": process,
+                         "filament": fil}}
