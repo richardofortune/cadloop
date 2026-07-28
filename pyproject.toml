@@ -23,7 +23,9 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: 3D Modeling",
     "Topic :: Scientific/Engineering",
 ]
-dependencies = ["mcp>=1.0"]
+# <2: mcp 2.0.0 (2026-07-28) removed mcp.server.fastmcp and restructured
+# the server API; >=1.2 is where FastMCP landed in the 1.x line.
+dependencies = ["mcp>=1.2,<2"]
 
 [project.optional-dependencies]
 verify = ["shapely>=2.0"]
