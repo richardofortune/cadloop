@@ -60,3 +60,31 @@ def test_classify_ignores_json_that_is_not_a_profile(tmp_path):
     other = tmp_path / "notaprofile.json"
     other.write_text('{"hello": "world"}')
     assert profiles.classify(other) is None
+
+
+def test_machine_facts_reads_all_five():
+    facts = profiles.machine_facts(FIXTURES / "flat.json",
+                                   FIXTURES / "proc.json",
+                                   FIXTURES / "fila.json")
+    assert facts["printer_model"] == "Fixture Printer"
+    assert facts["nozzle_mm"] == 0.4
+    assert facts["gcode_flavor"] == "marlin2"
+    assert facts["layer_height_mm"] == 0.2
+    assert facts["filament_type"] == "PLA"
+    assert facts["bed"]["x_mm"] == 220.0
+
+
+def test_machine_facts_leaves_unknowns_as_none():
+    facts = profiles.machine_facts(FIXTURES / "child.json",
+                                   FIXTURES / "proc.json",
+                                   FIXTURES / "fila.json")
+    assert facts["nozzle_mm"] is None
+    assert facts["bed"]["x_mm"] == 200.0
+
+
+def test_machine_facts_is_json_serialisable():
+    import json
+    facts = profiles.machine_facts(FIXTURES / "flat.json",
+                                   FIXTURES / "proc.json",
+                                   FIXTURES / "fila.json")
+    json.loads(json.dumps(facts))

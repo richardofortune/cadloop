@@ -174,3 +174,38 @@ def bed_of(machine_profile: str | Path) -> dict[str, Any]:
             "y_mm": round(max(ys) - min(ys), 2),
             "z_mm": float(h) if h else None,
             "origin": [min(xs), min(ys)]}
+
+
+def _first_scalar(value: Any) -> Any:
+    """Vendor profiles write single values as one-element lists as often as
+    not: nozzle_diameter is ["0.4"], filament_type is ["PLA"]."""
+    if isinstance(value, (list, tuple)):
+        return value[0] if value else None
+    return value
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(_first_scalar(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def machine_facts(machine: str | Path, process: str | Path,
+                  filament: str | Path) -> dict[str, Any]:
+    """The handful of facts the rest of the system needs, read once.
+
+    Everything downstream asks for these rather than parsing vendor JSON,
+    so the two spellings of printable_area and the inheritance walk are
+    handled in one place instead of being rediscovered per caller."""
+    m = profile_chain(Path(machine).expanduser())
+    p = profile_chain(Path(process).expanduser())
+    f = profile_chain(Path(filament).expanduser())
+    return {
+        "printer_model": _first_scalar(inherited(m, "printer_model")),
+        "nozzle_mm": _as_float(inherited(m, "nozzle_diameter")),
+        "gcode_flavor": _first_scalar(inherited(m, "gcode_flavor")),
+        "layer_height_mm": _as_float(inherited(p, "layer_height")),
+        "filament_type": _first_scalar(inherited(f, "filament_type")),
+        "bed": bed_of(machine),
+    }
