@@ -315,10 +315,15 @@ def slicer_info() -> dict[str, Any]:
     """Report the slicer binary, its version banner, and the full --help flag
     surface. Call this first. The Orca-family CLI changes between releases
     and Creality's fork diverges, so trust this over any assumed flag list."""
-    r = _run(["--help"], timeout_s=60)
+    try:
+        binary = _binary()
+    except (Refused, _machine.RecordError) as exc:
+        return {**_refusal(exc), "workspace": str(WORKSPACE),
+                "profile_roots": [str(p) for p in profile_roots()]}
+    r = _sh([binary, "--help"], 60)
     flags = sorted(set(re.findall(r"--[a-z][a-z0-9-]+", r["log"] or "")))
     return {
-        "binary": _binary(),
+        "binary": binary,
         "workspace": str(WORKSPACE),
         "profile_roots": [str(p) for p in profile_roots()],
         "flags": flags,
@@ -363,7 +368,10 @@ def model_info(model: str, timeout_s: int | None = None) -> dict[str, Any]:
     """Report what the slicer sees in a model or project file without
     slicing it. Uses --info."""
     src = _safe(model)
-    r = _run(["--info", str(src)], timeout_s=timeout_s or 120)
+    try:
+        r = _run(["--info", str(src)], timeout_s=timeout_s or 120)
+    except (Refused, _machine.RecordError) as exc:
+        return _refusal(exc)
     return {"ok": r["returncode"] == 0, "timed_out": r["timed_out"],
             "output": _tail(r["log"])}
 
