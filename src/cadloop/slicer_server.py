@@ -473,6 +473,9 @@ def slice_model(
     try:
         profs, warn = _active_profiles(machine_profile, process_profile,
                                        filament_profiles)
+        # The binary is settled here too. A record that cannot supply one is
+        # a refusal with a reason, not a traceback out of the tool call.
+        binary = _binary()
     except (Refused, _machine.RecordError) as exc:
         return _refusal(exc)
     srcs = [_safe(m) for m in models]
@@ -506,9 +509,9 @@ def slice_model(
     args += [str(s) for s in srcs]
 
     if dry_run:
-        return {"dry_run": True, "command": [_binary()] + args, "stale": warn}
+        return {"dry_run": True, "command": [binary] + args, "stale": warn}
 
-    r = _run(args, timeout_s=timeout_s)
+    r = _sh([binary] + args, timeout_s or DEFAULT_TIMEOUT)
     res: dict[str, Any] = {
         "ok": r["returncode"] == 0 and dst.exists(),
         "returncode": r["returncode"],
