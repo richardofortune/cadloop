@@ -1,3 +1,5 @@
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,65 @@ def only_fixture_profiles(monkeypatch):
     profiles.reset_cache()
     yield
     profiles.reset_cache()
+
+
+def _two_roots(tmp_path, monkeypatch, nest=False):
+    """A real two-install tree, optionally with a third root wrapping both -
+    which is what SLICER_PROFILE_DIRS=/Applications amounts to."""
+    base = tmp_path.resolve()
+    apps = base / "Applications"
+    orca, crea = apps / "orca", apps / "crea"
+    for root, tag in ((orca, "orca"), (crea, "crea")):
+        root.mkdir(parents=True)
+        (root / "Printer X.json").write_text(
+            json.dumps({"type": "machine", "name": "Printer X", "from": tag}))
+    dirs = [apps, orca, crea] if nest else [orca, crea]
+    monkeypatch.setenv("SLICER_PROFILE_DIRS",
+                       os.pathsep.join(str(d) for d in dirs))
+    profiles.reset_cache()
+    return apps, orca, crea
+
+
+def test_root_of_answers_with_the_most_specific_root(tmp_path, monkeypatch):
+    apps, orca, crea = _two_roots(tmp_path, monkeypatch, nest=True)
+    assert apps in profiles.profile_roots()
+    assert profiles.root_of(orca / "Printer X.json") == orca
+    assert profiles.root_of(crea / "Printer X.json") == crea
+
+
+def test_same_install_separates_two_installs_under_one_configured_root(
+        tmp_path, monkeypatch):
+    apps, orca, crea = _two_roots(tmp_path, monkeypatch, nest=True)
+    assert profiles.same_install(orca / "Printer X.json",
+                                 crea / "Printer X.json") is False
+    assert profiles.same_install(orca / "Printer X.json",
+                                 orca / "Printer X.json") is True
+
+
+def test_same_install_is_none_when_it_cannot_tell(tmp_path, monkeypatch):
+    _two_roots(tmp_path, monkeypatch)
+    assert profiles.same_install(tmp_path / "elsewhere.json",
+                                 tmp_path / "other.json") is None
+
+
+def test_root_profiles_keeps_the_copy_profile_index_drops(
+        tmp_path, monkeypatch):
+    _apps, orca, crea = _two_roots(tmp_path, monkeypatch)
+    # one path per name across every root, so one of the two copies is gone
+    assert profiles.profile_index()["Printer X"] == orca / "Printer X.json"
+    assert [r["path"] for r in profiles.root_profiles(crea)] == [
+        str(crea / "Printer X.json")]
+
+
+def test_reset_cache_lets_a_later_install_be_seen(tmp_path, monkeypatch):
+    _apps, orca, _crea = _two_roots(tmp_path, monkeypatch)
+    assert "Printer Y" not in profiles.profile_index()
+    (orca / "Printer Y.json").write_text(
+        json.dumps({"type": "machine", "name": "Printer Y"}))
+    assert "Printer Y" not in profiles.profile_index()
+    profiles.reset_cache()
+    assert "Printer Y" in profiles.profile_index()
+    assert any(r["name"] == "Printer Y" for r in profiles.root_profiles(orca))
 
 
 def test_area_points_reads_a_list_of_pairs():
