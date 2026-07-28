@@ -113,13 +113,21 @@ Two axes, not one slider. The kind of change, and whether it is necessary.
 
 | | Necessary: it will not print otherwise | Improving: it prints either way |
 | --- | --- | --- |
-| **Arrangement** — plate, position, rotation | Apply, and say so | Apply, and say so |
+| **Plate and position** | Apply, and say so | Apply, and say so |
+| **Rotation** | Apply, and say so | Report only |
 | **Slicing settings** — brim, supports, thin-wall handling | Apply, and say so | Report only |
 | **Geometry** — the model | Never | Never |
 
 Refusing to rotate a part that only fits on the diagonal is not caution, it is
 handing back a failure the pipeline already knew how to avoid. Adding a brim
 that merely improves adhesion is advice, and costs cleanup, so it stays advice.
+
+Rotation is deliberately stricter than the rest of arrangement. Which plate a
+part lands on, and where on it, has no effect on the part. Rotation does: it
+turns the layers relative to the geometry, and a gear rotated for tighter
+packing is a gear whose teeth are weaker in a direction nobody chose. So the
+packer rotates only where a part would not otherwise fit, and reports a rotation
+that would merely pack better rather than taking it.
 
 Geometry is never touched. In a parametric model the right fix is usually a
 parameter, and the model knows which parameter means what. The pipeline can
