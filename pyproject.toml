@@ -27,6 +27,7 @@ dependencies = ["mcp>=1.0"]
 
 [project.optional-dependencies]
 verify = ["shapely>=2.0"]
+dev = ["pytest>=8"]
 
 [project.urls]
 Homepage = "https://github.com/richardofortune/cadloop"
@@ -50,3 +51,8 @@ packages = ["src/cadloop"]
 # agent state out, and the filmed walkthrough too: it is a couple of megabytes
 # of media that the README already links to on GitHub.
 exclude = [".claude", ".vscode", ".github", "out", ".venv", "/docs/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# smoke.py is a standalone script driving real MCP sessions, not a pytest module
+addopts = "--ignore=tests/smoke.py --ignore=tests/mock"

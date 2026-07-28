@@ -1,0 +1,6 @@
+{
+  "type": "machine",
+  "name": "Bed Base",
+  "printable_area": ["0x0", "200x0", "200x200", "0x200"],
+  "printable_height": "180"
+}
