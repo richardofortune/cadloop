@@ -18,6 +18,9 @@
 - The pipeline may rearrange parts but never edits geometry. Rotation only where a part would not otherwise fit.
 - Existing published 0.1.0 signatures keep working: passing a profile explicitly stays legal.
 - Spec: `docs/superpowers/specs/2026-07-28-machine-aware-pipeline-design.md`
+- Acceptance criteria: `docs/superpowers/specs/2026-07-28-acceptance-criteria.md`.
+  This landing delivers A1, A2, A3 and A7. A choice that moves none of A1 to A8
+  is an implementation detail: pick the better option and record it.
 
 ---
 
@@ -1449,11 +1452,20 @@ Change the signature so the three profile parameters default to `None`:
 ```python
 def slice_model(
     models: list[str],
-    output: str,
     machine_profile: str | None = None,
     process_profile: str | None = None,
     filament_profiles: list[str] | None = None,
+    output: str | None = None,
     ...
+```
+
+`output` keeps a default only so the published positional order survives. Reject
+a missing one as the first statement of the body:
+
+```python
+    if not output:
+        raise ValueError("output is required (it defaults to None only to keep "
+                         "the published positional order)")
 ```
 
 and replace the two lines that build `settings` and `filaments` with:
@@ -1467,7 +1479,7 @@ and replace the two lines that build `settings` and `filaments` with:
 
 Add `"stale": warn` to the returned dict.
 
-Note the parameter order changed: `output` moves ahead of the profiles so the required arguments come first. Update the two call sites in `tests/smoke.py` to pass `output` by keyword.
+The parameter order is unchanged, so no existing call site needs touching.
 
 - [ ] **Step 4: Add smoke coverage**
 
@@ -1565,10 +1577,12 @@ since they are worked around at runtime rather than asserted in code."
 - The spec calls the read tool `machine()`. It is `machine_info()` here, because
   `slicer_server.py` imports the module as `_machine` and a tool named `machine`
   would shadow it at the point of use. Same contract, clearer name.
-- The spec shows `slice_model(models, output)`. The parameter order changes so
-  that `output` precedes the now-optional profiles, which is a breaking change
-  for any caller passing profiles positionally. Both call sites in the repo pass
-  by keyword; the smoke test is updated in Task 7 to keep it that way.
+- The spec shows `slice_model(models, output)`. The published parameter order is
+  kept instead, with all four of `machine_profile`, `process_profile`,
+  `filament_profiles` and `output` defaulting to `None` and a missing `output`
+  raising at the top of the body. Reordering would have broken any positional
+  caller of a package that is on PyPI. `output` reading as optional when it is
+  not is the accepted cost, stated in the docstring.
 
 ## What lands after this
 

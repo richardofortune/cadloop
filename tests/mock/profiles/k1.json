@@ -1,7 +1,7 @@
 {
   "type": "machine",
-  "name": "Creality K1 0.4 nozzle",
-  "printer_model": "Creality K1",
+  "name": "Mock K1 0.4 nozzle",
+  "printer_model": "Mock K1",
   "nozzle_diameter": [
     "0.4"
   ],
@@ -12,5 +12,6 @@
     "220x220",
     "0x220"
   ],
-  "printable_height": "250"
+  "printable_height": "250",
+  "gcode_flavor": "marlin2"
 }

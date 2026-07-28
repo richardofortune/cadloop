@@ -13,9 +13,11 @@ CLI. Point SLICER_BIN wherever you like.
 Environment:
   SLICER_BIN           path to the slicer binary (auto-detected if unset)
   SLICER_WORKSPACE     the only directory this server reads and writes
-                       (default ~/slicing)
+                       (default ~/cad)
   SLICER_PROFILE_DIRS  extra profile roots, os.pathsep separated
   SLICER_TIMEOUT       seconds before a slice is killed (default 600)
+  CADLOOP_MACHINE      where the machine record setup_printer writes lives
+                       (default $XDG_CONFIG_HOME/cadloop/machine.json)
 
 Run:  python creality_mcp.py
 """
@@ -36,67 +38,115 @@ from xml.etree import ElementTree
 
 from mcp.server.fastmcp import FastMCP
 
+from . import machine as _machine
+from . import slicers as _slicers
 from .common import (find_binary, measure_stl, run as _sh,
                      safe_path, tail as _tail_, workspace)
+from .profiles import (bed_of, classify, machine_facts, profile_roots,
+                       reset_cache, root_of)
 
 WORKSPACE = workspace("SLICER_WORKSPACE", "cad")
 DEFAULT_TIMEOUT = int(os.environ.get("SLICER_TIMEOUT", "600"))
 
 mcp = FastMCP("creality-slicer")
 
-# Orca and its forks come first. Creality Print is last on purpose: its CLI
-# does not work headless on macOS at all, so picking it by default there
-# hands back a binary that segfaults on every call. Set SLICER_BIN to
-# override any of this.
-_BIN_CANDIDATES = [
-    "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
-    "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio",
-    "/Applications/ElegooSlicer.app/Contents/MacOS/ElegooSlicer",
-    "/usr/bin/orca-slicer",
-    "/usr/bin/OrcaSlicer",
-    r"C:\Program Files\OrcaSlicer\orca-slicer.exe",
-    r"C:\Program Files\Bambu Studio\bambu-studio.exe",
-    "/Applications/Creality Print.app/Contents/MacOS/CrealityPrint",
-    "/Applications/CrealityPrint.app/Contents/MacOS/CrealityPrint",
-    r"C:\Program Files\Creality\Creality Print 7.0\CrealityPrint.exe",
-    r"C:\Program Files\Creality\Creality Print 6.0\CrealityPrint.exe",
-    "/usr/bin/CrealityPrint",
-]
 
-# Each of these slicers ships its vendor profiles inside the install as well
-# as writing user ones to a config directory, and the bundled set is the one
-# holding the stock machine definitions.
-_PROFILE_CANDIDATES = [
-    "/Applications/OrcaSlicer.app/Contents/Resources/profiles",
-    "/Applications/BambuStudio.app/Contents/Resources/profiles",
-    "/Applications/ElegooSlicer.app/Contents/Resources/profiles",
-    "/Applications/Creality Print.app/Contents/Resources/profiles",
-    "~/Library/Application Support/OrcaSlicer",
-    "~/Library/Application Support/BambuStudio",
-    "~/Library/Application Support/ElegooSlicer",
-    "~/Library/Application Support/Creality/Creality Print",
-    r"C:\Program Files\OrcaSlicer\resources\profiles",
-    r"C:\Program Files\Bambu Studio\resources\profiles",
-    r"C:\Program Files\Creality\Creality Print 7.0\resources\profiles",
-    "~/AppData/Roaming/OrcaSlicer",
-    "~/AppData/Roaming/BambuStudio",
-    "~/AppData/Roaming/Creality/Creality Print",
-    "/usr/share/OrcaSlicer/resources/profiles",
-    "/usr/share/CrealityPrint/resources/profiles",
-    "~/.config/OrcaSlicer",
-    "~/.config/CrealityPrint",
-]
+class Refused(RuntimeError):
+    """This call cannot be answered from what is known, and answering it
+    anyway would produce G-code nobody validated."""
 
 
 # --------------------------------------------------------------------
 # plumbing
 # --------------------------------------------------------------------
 
+_PROBED: dict[str, dict[str, Any]] = {}
+
+
+def _probe_once(binary: str) -> dict[str, Any]:
+    """probe() runs the binary, so the answer is cached for the life of the
+    process. A slicer does not grow or lose CLI flags while we watch."""
+    if binary not in _PROBED:
+        _PROBED[binary] = _slicers.probe(binary)
+    return _PROBED[binary]
+
+
+def _unusable(binary: str) -> str | None:
+    """Why this path cannot be handed to subprocess as a program, or None."""
+    p = Path(binary)
+    if p.is_dir():
+        return "is a directory, not a program"
+    if not p.exists():
+        return "is not there any more"
+    if not p.is_file():
+        return "is not a regular file"
+    if not os.access(str(p), os.X_OK):
+        return "is not executable"
+    return None
+
+
+def _detect() -> str:
+    """A slicer to run when nothing has been set up and nothing overridden.
+
+    Every candidate is probed and one that passes is used. If several pass,
+    this refuses rather than picking: the order of a list in this file is not
+    a reason to prefer one vendor's slicer over another's, and the whole
+    point of setup_printer is to make that choice deliberately, once."""
+    found = _slicers.installed()
+    if not found:
+        raise RuntimeError(
+            "no slicer found in any known install location; set SLICER_BIN "
+            "to the binary path")
+    working = [c["binary"] for c in found if _probe_once(c["binary"])["ok"]]
+    if not working:
+        raise RuntimeError(
+            "no installed slicer answered --help with the flags needed to "
+            "slice; set SLICER_BIN to the binary path")
+    if len(working) > 1:
+        raise RuntimeError(
+            "more than one installed slicer can slice ("
+            + ", ".join(working)
+            + "); run setup_printer, or set SLICER_BIN, rather than letting "
+              "the order of a list decide which one your G-code comes from")
+    return working[0]
+
+
 def _binary() -> str:
-    return find_binary(
-        "SLICER_BIN",
-        ["CrealityPrint", "creality-print", "orca-slicer", "OrcaSlicer"],
-        _BIN_CANDIDATES)
+    """The slicer to run: an explicit SLICER_BIN always wins, then the
+    binary the stored machine record proved works, then detection.
+
+    A record that staleness() rejects supplies nothing. Falling through to
+    detection there was how a slice could end up running on a slicer that
+    was never proven against these profiles, silently."""
+    env = os.environ.get("SLICER_BIN")
+    if env:
+        # names and candidates are unreachable with the variable set; the
+        # search space lives in slicers.SLICER_CANDIDATES now.
+        return find_binary("SLICER_BIN", [], [])
+    rec = _machine.load()
+    if not rec:
+        return _detect()
+    why = _machine.staleness(rec)
+    if why:
+        raise Refused(
+            f"the stored printer no longer matches what is on disk: {why}. "
+            "Run setup_printer. Refusing to substitute a different slicer.")
+    recorded = (rec.get("slicer") or {}).get("binary")
+    if not recorded:
+        return _detect()
+    bad = _unusable(recorded)
+    if bad:
+        raise Refused(f"the recorded slicer {recorded} {bad}. Run setup_printer.")
+    probed = _probe_once(recorded)
+    if not probed["ok"]:
+        raise Refused(f"the recorded slicer {recorded} no longer runs: "
+                      f"{probed['reason']}. Run setup_printer.")
+    was = (rec.get("fingerprint") or {}).get("version")
+    if was and probed["version"] and probed["version"] != was:
+        raise Refused(
+            f"the recorded slicer is now version {probed['version']}, and the "
+            f"printer was proven against {was}. Run setup_printer.")
+    return recorded
 
 
 def _run(args: list[str], timeout_s: int | None = None) -> dict[str, Any]:
@@ -118,125 +168,6 @@ def _errors(log: str) -> list[str]:
         if re.search(r"\b(error|fatal|failed|exception|crash)\b", s, re.I):
             out.append(s)
     return out[-25:]
-
-
-# --------------------------------------------------------------------
-# profiles
-# --------------------------------------------------------------------
-
-def _profile_roots() -> list[Path]:
-    roots: list[Path] = []
-    for raw in os.environ.get("SLICER_PROFILE_DIRS", "").split(os.pathsep):
-        if raw.strip():
-            roots.append(Path(raw.strip()).expanduser())
-    for c in _PROFILE_CANDIDATES:
-        p = Path(c).expanduser()
-        if p.exists():
-            roots.append(p)
-    seen, out = set(), []
-    for r in roots:
-        if r.exists() and str(r) not in seen:
-            seen.add(str(r))
-            out.append(r)
-    return out
-
-
-_PROFILE_INDEX: dict[str, Path] | None = None
-
-
-def _profile_index() -> dict[str, Path]:
-    """Map profile name to path across every root, so `inherits` can be
-    followed. Built once per process; the profile tree does not move."""
-    global _PROFILE_INDEX
-    if _PROFILE_INDEX is None:
-        idx: dict[str, Path] = {}
-        for root in _profile_roots():
-            for p in root.rglob("*.json"):
-                try:
-                    if p.stat().st_size > 2_000_000:
-                        continue
-                    data = json.loads(p.read_text(errors="replace"))
-                except Exception:
-                    continue
-                if isinstance(data, dict) and data.get("name"):
-                    idx.setdefault(str(data["name"]), p)
-        _PROFILE_INDEX = idx
-    return _PROFILE_INDEX
-
-
-def _profile_chain(path: Path, limit: int = 12) -> list[dict[str, Any]]:
-    """A profile followed by its `inherits` ancestors, nearest first.
-
-    Stock profiles are layered: most Bambu machines carry no printable_area
-    of their own and pick it up from a common base."""
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    cur: Path | None = Path(path).expanduser()
-    while cur is not None and len(out) < limit:
-        try:
-            data = json.loads(Path(cur).read_text(errors="replace"))
-        except Exception:
-            break
-        if not isinstance(data, dict):
-            break
-        out.append(data)
-        parent = data.get("inherits")
-        if not parent or str(parent) in seen:
-            break
-        seen.add(str(parent))
-        cur = _profile_index().get(str(parent))
-    return out
-
-
-def _inherited(chain: list[dict[str, Any]], key: str) -> Any:
-    """First non-empty value for key walking up the inheritance chain."""
-    for data in chain:
-        v = data.get(key)
-        if v not in (None, "", [], {}):
-            return v
-    return None
-
-
-def _area_points(raw: Any) -> list[tuple[float, float]]:
-    """printable_area is a list of "XxY" strings in some stock profiles and a
-    single comma-separated string in others. Both ship with Creality Print."""
-    if isinstance(raw, str):
-        items: list[Any] = raw.split(",")
-    elif isinstance(raw, (list, tuple)):
-        items = list(raw)
-    else:
-        return []
-    pts: list[tuple[float, float]] = []
-    for item in items:
-        m = re.findall(r"-?\d+(?:\.\d+)?", str(item))
-        if len(m) >= 2:
-            pts.append((float(m[0]), float(m[1])))
-    return pts
-
-
-def _classify(path: Path) -> dict[str, Any] | None:
-    """Orca-family profile JSONs carry a "type" key: machine, process or
-    filament. Anything else is not a profile we care about."""
-    try:
-        if path.stat().st_size > 2_000_000:
-            return None
-        data = json.loads(path.read_text(errors="replace"))
-    except Exception:
-        return None
-    if not isinstance(data, dict):
-        return None
-    kind = data.get("type")
-    if kind not in ("machine", "process", "filament"):
-        return None
-    return {
-        "kind": kind,
-        "name": data.get("name") or path.stem,
-        "path": str(path),
-        "inherits": data.get("inherits"),
-        "printer_model": data.get("printer_model"),
-        "nozzle": data.get("nozzle_diameter"),
-        "from": data.get("from"),
-    }
 
 
 # --------------------------------------------------------------------
@@ -296,6 +227,85 @@ def _archive_summary(path: Path) -> dict[str, Any]:
     return out
 
 
+def _active_profiles(machine_profile: str | None = None,
+                     process_profile: str | None = None,
+                     filament_profiles: list[str] | None = None,
+                     needs: tuple[str, ...] = ("machine", "process", "filament"),
+                     ) -> tuple[dict[str, Any], str | None]:
+    """Profiles for this call: whatever was passed, then the stored machine.
+
+    Explicit arguments still win, field by field, so every 0.1.0 call site
+    keeps working. Two things that field-by-field filling gets wrong on its
+    own are corrected here.
+
+    A record that no longer matches the disk is refused rather than reported.
+    A3 says a setup that does not match reality is never used, and a warning
+    attached to the result of the call that already did the work is not that:
+    the bed had already been read from a stale cache and the G-code already
+    written by the time anyone could act on it.
+
+    And a machine profile given explicitly is not paired with a stored
+    process and filament from some other install. That combination is exactly
+    the cross-vendor triple this record exists to eliminate, arrived at from
+    the other direction.
+
+    needs is the kinds this particular call actually consumes, so
+    check_bed_fit is not refused over a stale process profile it never
+    reads."""
+    given = {
+        "machine": machine_profile,
+        "process": process_profile,
+        "filament": list(filament_profiles) if filament_profiles else [],
+    }
+    supplied = {k for k in needs if given[k]}
+    rec: dict[str, Any] | None = None
+    warn: str | None = None
+    if supplied != set(needs):
+        rec = _machine.load()
+        if rec is None:
+            raise Refused(
+                "no printer set up and no "
+                + " or ".join(sorted(set(needs) - supplied))
+                + " profile given. Run setup_printer.")
+        warn = _machine.staleness(rec)
+        if warn:
+            raise Refused(
+                f"the stored printer no longer matches what is on disk: {warn}. "
+                "Run setup_printer, or pass the profiles explicitly.")
+    stored = (rec or {}).get("profiles") or {}
+    out = {
+        "machine": given["machine"] or stored.get("machine"),
+        "process": given["process"] or stored.get("process"),
+        "filament": given["filament"] or ([stored["filament"]]
+                                          if stored.get("filament") else []),
+    }
+    missing = [k for k in needs if not out[k]]
+    if missing:
+        raise Refused("no printer set up and no " + " or ".join(missing)
+                      + " profile given. Run setup_printer.")
+
+    if supplied and rec is not None:
+        roots = {}
+        for kind in needs:
+            value = out[kind][0] if kind == "filament" else out[kind]
+            r = root_of(value)
+            if r is not None:
+                roots[kind] = str(r)
+        if len(set(roots.values())) > 1:
+            raise Refused(
+                "the profiles given and the ones stored come from different "
+                "slicer installs, and a triple assembled across two installs "
+                "is not a configuration anyone tested: "
+                + "; ".join(f"{k} from {v}" for k, v in sorted(roots.items()))
+                + ". Pass all of them, or none.")
+    return out, warn
+
+
+def _refusal(exc: Exception) -> dict[str, Any]:
+    """A refusal is not a failure: nothing was concluded, so ok is null."""
+    return {"ok": None, "reason": str(exc), "stale": str(exc)}
+
+
 # --------------------------------------------------------------------
 # tools
 # --------------------------------------------------------------------
@@ -305,12 +315,17 @@ def slicer_info() -> dict[str, Any]:
     """Report the slicer binary, its version banner, and the full --help flag
     surface. Call this first. The Orca-family CLI changes between releases
     and Creality's fork diverges, so trust this over any assumed flag list."""
-    r = _run(["--help"], timeout_s=60)
+    try:
+        binary = _binary()
+    except (Refused, _machine.RecordError) as exc:
+        return {**_refusal(exc), "workspace": str(WORKSPACE),
+                "profile_roots": [str(p) for p in profile_roots()]}
+    r = _sh([binary, "--help"], 60)
     flags = sorted(set(re.findall(r"--[a-z][a-z0-9-]+", r["log"] or "")))
     return {
-        "binary": _binary(),
+        "binary": binary,
         "workspace": str(WORKSPACE),
-        "profile_roots": [str(p) for p in _profile_roots()],
+        "profile_roots": [str(p) for p in profile_roots()],
         "flags": flags,
         "help_text": _tail(r["log"] or "", 6000),
         "default_timeout_s": DEFAULT_TIMEOUT,
@@ -323,9 +338,9 @@ def list_profiles(kind: str = "all", query: str | None = None,
     """Find machine, process and filament profiles. kind is machine, process,
     filament or all. query filters on the profile name, case-insensitive."""
     found: list[dict[str, Any]] = []
-    for root in _profile_roots():
+    for root in profile_roots():
         for p in root.rglob("*.json"):
-            rec = _classify(p)
+            rec = classify(p)
             if not rec:
                 continue
             if kind != "all" and rec["kind"] != kind:
@@ -336,7 +351,7 @@ def list_profiles(kind: str = "all", query: str | None = None,
     found.sort(key=lambda r: (r["kind"], r["name"] or ""))
     return {"count": len(found), "profiles": found[:limit],
             "truncated": len(found) > limit,
-            "roots_searched": [str(p) for p in _profile_roots()]}
+            "roots_searched": [str(p) for p in profile_roots()]}
 
 
 @mcp.tool()
@@ -353,44 +368,49 @@ def model_info(model: str, timeout_s: int | None = None) -> dict[str, Any]:
     """Report what the slicer sees in a model or project file without
     slicing it. Uses --info."""
     src = _safe(model)
-    r = _run(["--info", str(src)], timeout_s=timeout_s or 120)
+    try:
+        r = _run(["--info", str(src)], timeout_s=timeout_s or 120)
+    except (Refused, _machine.RecordError) as exc:
+        return _refusal(exc)
     return {"ok": r["returncode"] == 0, "timed_out": r["timed_out"],
             "output": _tail(r["log"])}
 
 
-def _bed(machine_profile: str) -> dict[str, Any]:
-    chain = _profile_chain(Path(machine_profile).expanduser())
-    if not chain:
-        return {}
-    pts = _area_points(_inherited(chain, "printable_area"))
-    if len(pts) < 2:
-        return {}
-    xs = [p[0] for p in pts]
-    ys = [p[1] for p in pts]
-    h = _inherited(chain, "printable_height")
-    return {"x_mm": round(max(xs) - min(xs), 2),
-            "y_mm": round(max(ys) - min(ys), 2),
-            "z_mm": float(h) if h else None,
-            "origin": [min(xs), min(ys)]}
-
-
 @mcp.tool()
-def check_bed_fit(model: str, machine_profile: str,
+def check_bed_fit(model: str, machine_profile: str | None = None,
                   margin_mm: float = 3.0) -> dict[str, Any]:
     """Compare an STL's footprint against the machine profile's printable
     area before slicing. The slicer will happily emit out-of-bounds G-code
     without complaining, so this is worth doing first.
 
+    machine_profile defaults to the stored machine record, set up once by
+    setup_printer. Pass it explicitly to check against a different printer.
+    A stored printer that no longer matches the disk is refused here rather
+    than used, because answering from a cached bed is how a part that does
+    not fit gets told that it does.
+
     Rotating 45 degrees in Z is checked too, since a part that misses the
     bed square-on often fits on the diagonal."""
+    try:
+        profs, warn = _active_profiles(machine_profile, needs=("machine",))
+    except (Refused, _machine.RecordError) as exc:
+        return _refusal(exc)
     stl = _safe(model)
     mesh = measure_stl(stl)
     if not mesh.get("triangles"):
-        return {"ok": None, "reason": "no geometry in that mesh", "mesh": mesh}
-    bed = _bed(machine_profile)
+        return {"ok": None, "reason": "no geometry in that mesh", "mesh": mesh,
+                "stale": warn}
+    # Read the bed off the profile rather than the record's cached copy: the
+    # fingerprint covers the machine profile but not the parents it inherits
+    # its printable_area from, so the cache can be right about the file and
+    # wrong about the bed. The cache is only a fallback for a profile that
+    # declares no bed anywhere.
+    bed = bed_of(profs["machine"])
+    if not bed and not machine_profile:
+        bed = ((_machine.load() or {}).get("derived") or {}).get("bed") or {}
     if not bed:
         return {"ok": None, "reason": "no printable_area in machine profile",
-                "mesh": mesh}
+                "mesh": mesh, "stale": warn}
     sx, sy, sz = mesh["size_mm"]
     diag = (sx + sy) * 0.70711        # footprint of a 45 degree rotation
     fits = (sx + margin_mm <= bed["x_mm"] and sy + margin_mm <= bed["y_mm"])
@@ -406,16 +426,17 @@ def check_bed_fit(model: str, machine_profile: str,
         "bed": bed,
         "margin_mm": margin_mm,
         "volume_mm3": mesh["volume_mm3"],
+        "stale": warn,
     }
 
 
 @mcp.tool()
 def slice_model(
     models: list[str],
-    machine_profile: str,
-    process_profile: str,
-    filament_profiles: list[str],
-    output: str,
+    machine_profile: str | None = None,
+    process_profile: str | None = None,
+    filament_profiles: list[str] | None = None,
+    output: str | None = None,
     plate: int = 1,
     arrange: int = 1,
     orient: int = 0,
@@ -431,7 +452,11 @@ def slice_model(
 
     machine_profile, process_profile and filament_profiles are paths to
     profile JSONs, as returned by list_profiles. Load order matters: the
-    machine profile is passed before the process profile.
+    machine profile is passed before the process profile. All three default
+    to the stored machine record, set up once by setup_printer, so a normal
+    call needs none of them. output defaults to None only to preserve the
+    published positional parameter order; it is still required and raises
+    if missing.
 
     overrides is a map of any slicer setting key to a value, passed as
     command-line flags. These beat both the profiles and anything embedded
@@ -448,6 +473,19 @@ def slice_model(
     parts fit the bed, so measure them first.
 
     Set dry_run to see the exact command without running it."""
+    if not output:
+        raise ValueError("output is required (it defaults to None only to keep "
+                         "the published positional order)")
+    # Before anything is written: a setup that does not match reality has to
+    # surface here, not in the returned summary of a file already on disk.
+    try:
+        profs, warn = _active_profiles(machine_profile, process_profile,
+                                       filament_profiles)
+        # The binary is settled here too. A record that cannot supply one is
+        # a refusal with a reason, not a traceback out of the tool call.
+        binary = _binary()
+    except (Refused, _machine.RecordError) as exc:
+        return _refusal(exc)
     srcs = [_safe(m) for m in models]
     for s in srcs:
         if not s.exists():
@@ -455,8 +493,8 @@ def slice_model(
     dst = _safe(output)
     dst.parent.mkdir(parents=True, exist_ok=True)
 
-    settings = f"{Path(machine_profile).expanduser()};{Path(process_profile).expanduser()}"
-    filaments = ";".join(str(Path(f).expanduser()) for f in filament_profiles)
+    settings = f"{Path(profs['machine']).expanduser()};{Path(profs['process']).expanduser()}"
+    filaments = ";".join(str(Path(f).expanduser()) for f in profs["filament"])
 
     args = ["--slice", str(plate),
             "--load-settings", settings,
@@ -479,9 +517,9 @@ def slice_model(
     args += [str(s) for s in srcs]
 
     if dry_run:
-        return {"dry_run": True, "command": [_binary()] + args}
+        return {"dry_run": True, "command": [binary] + args, "stale": warn}
 
-    r = _run(args, timeout_s=timeout_s)
+    r = _sh([binary] + args, timeout_s or DEFAULT_TIMEOUT)
     res: dict[str, Any] = {
         "ok": r["returncode"] == 0 and dst.exists(),
         "returncode": r["returncode"],
@@ -490,6 +528,7 @@ def slice_model(
         "output": str(dst) if dst.exists() else None,
         "errors": _errors(r["log"]),
         "log_tail": _tail(r["log"], 2000),
+        "stale": warn,
     }
     if dst.exists() and zipfile.is_zipfile(dst):
         try:
@@ -529,6 +568,147 @@ def extract_gcode(archive: str, output: str, plate: int = 1) -> dict[str, Any]:
     return {"entry": want[0], "output": str(dst),
             "bytes": dst.stat().st_size,
             "header": {k.strip(): v.strip() for k, v in list(meta.items())[:20]}}
+
+
+# --------------------------------------------------------------------
+# machine setup
+# --------------------------------------------------------------------
+
+def _prove(binary: str, profs: dict) -> dict[str, Any]:
+    """Slice a 20mm cube. The only check that would have caught a stock
+    printer failing slicer validation, which happens at slice time and is
+    invisible to any static inspection of the profiles."""
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        stl = d / "cube.stl"
+        stl.write_text(_machine.CUBE_STL)
+        out = d / "cube.gcode.3mf"
+        args = ["--slice", "1",
+                "--load-settings", f"{profs['machine']};{profs['process']}",
+                "--load-filaments", profs["filament"],
+                "--export-3mf", str(out), str(stl)]
+        r = _sh([binary] + args, 300)
+        if r["timed_out"]:
+            return {"ok": False, "reason": "test slice timed out"}
+        if not out.exists():
+            return {"ok": False,
+                    "reason": f"test slice exited {r['returncode']}: "
+                              f"{_tail(r['log'], 200).strip() or 'no output'}"}
+        return {"ok": True, "reason": "", "bytes": out.stat().st_size}
+
+
+@mcp.tool()
+def setup_printer(printer: str | None = None,
+                  filament: str | None = None,
+                  process: str | None = None) -> dict[str, Any]:
+    """Work out which printer this is for, once, and remember it.
+
+    Reads what your slicer is already configured with, resolves it to a
+    profile triple, proves the combination by slicing a 20mm cube, and
+    stores the result. Every other tool then works without profile
+    arguments. Pass printer, filament or process only to override what is
+    configured, or when nothing is; each overrides that field alone, and the
+    rest still come from your slicer's own settings.
+
+    Reports the printer, the quality and the filament it settled on, and
+    stores nothing at all unless the test slice succeeded."""
+    # Profiles installed since this process started are otherwise invisible,
+    # so a setup that failed for want of them keeps failing until restart.
+    reset_cache()
+    report: dict[str, Any] = {"adopted": None, "steps": [], "notes": []}
+
+    want_printer, want_filament, want_process = printer, filament, process
+    for cand in _slicers.adopt():
+        report["adopted"] = {"from": cand["source"],
+                             "printer": cand["printer"],
+                             "process": cand["process"],
+                             "filament": cand["filament"]}
+        # Field by field, so naming a printer does not throw away the quality
+        # setting the user chose in their slicer's own interface.
+        want_printer = want_printer or cand["printer"]
+        want_filament = want_filament or cand["filament"]
+        want_process = want_process or cand["process"]
+        break
+
+    demanded = [k for k, v in (("process", process), ("filament", filament))
+                if v]
+    res = _machine.resolve(want_printer, want_filament, process=want_process,
+                           explicit=demanded)
+    if not res["ok"]:
+        report["notes"] = res.get("notes") or []
+        return {"ok": False, "reason": res["reason"],
+                "candidates": res["candidates"], **report}
+    report["notes"] = res.get("notes") or []
+    report["chose"] = {"printer": res["printer"],
+                       "quality": res["names"]["process"],
+                       "filament": res["names"]["filament"]}
+
+    # An explicit SLICER_BIN wins here as it does everywhere else: proving a
+    # printer against a slicer the caller has told us not to use proves
+    # nothing about the one it will actually run on.
+    try:
+        chosen = find_binary("SLICER_BIN", [], []) if os.environ.get(
+            "SLICER_BIN") else None
+    except RuntimeError as exc:
+        return {"ok": False, "reason": str(exc), **report}
+    found = ([{"family": _slicers.family_of(chosen), "binary": chosen}]
+             if chosen else _slicers.installed())
+    if not found:
+        return {"ok": None,
+                "reason": "no slicer found in any known install location, so "
+                          "whether this printer works here cannot be "
+                          "established; set SLICER_BIN or install one",
+                **report}
+
+    working = []
+    for cand in found:
+        p = _slicers.probe(cand["binary"])
+        report["steps"].append({"binary": cand["binary"], "ok": p["ok"],
+                                "reason": p["reason"], "version": p["version"]})
+        if p["ok"]:
+            working.append({**cand, "version": p["version"]})
+    if not working:
+        return {"ok": False, "reason": "no installed slicer answered --help "
+                                       "with the flags needed to slice", **report}
+
+    for cand in working:
+        proof = _prove(cand["binary"], res["profiles"])
+        if proof["ok"]:
+            facts = machine_facts(res["profiles"]["machine"],
+                                  res["profiles"]["process"],
+                                  res["profiles"]["filament"])
+            rec = {"schema": _machine.SCHEMA, "name": res["printer"],
+                   "slicer": {"family": cand["family"], "binary": cand["binary"],
+                              "version": cand["version"]},
+                   "profiles": res["profiles"], "derived": facts,
+                   "fingerprint": _machine.fingerprint(
+                       cand["binary"], cand["version"], res["profiles"]),
+                   "proof": {"test_slice_ok": True,
+                             "gcode_bytes": proof.get("bytes")}}
+            _machine.save(rec)
+            return {"ok": True, "machine": rec, **report}
+        report["steps"].append({"binary": cand["binary"], "ok": False,
+                                "reason": proof["reason"]})
+
+    return {"ok": False,
+            "reason": "every working slicer failed to slice the test cube",
+            **report}
+
+
+@mcp.tool()
+def machine_info() -> dict[str, Any]:
+    """The printer this workspace is set up for, and whether it is still
+    current. Returns ok: null when setup has never run."""
+    try:
+        rec = _machine.load()
+    except _machine.RecordError as exc:
+        return {"ok": None, "reason": str(exc)}
+    if rec is None:
+        return {"ok": None, "reason": "no printer set up yet, run setup_printer"}
+    why = _machine.staleness(rec)
+    return {"ok": why is None, "reason": why or "",
+            "name": rec.get("name"), "slicer": rec.get("slicer"),
+            "derived": rec.get("derived")}
 
 
 def main() -> None:

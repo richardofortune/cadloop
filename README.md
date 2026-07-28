@@ -19,6 +19,8 @@ from is in
 [docs/walkthrough](https://github.com/richardofortune/cadloop/tree/main/docs/walkthrough).*
 
 ```text
+ setup_printer   once, no arguments: which printer is this for
+      |
   write .scad
       |
    check          syntax and references, about a second
@@ -31,7 +33,7 @@ from is in
       |
    measure        bounding box and volume
       |
- check_bed_fit    against the machine profile's printable area
+ check_bed_fit    against the printer you set up
       |
   slice_model     -> .gcode.3mf
       |
@@ -59,9 +61,15 @@ pip install -e ".[verify]"
 
 Needs OpenSCAD on `PATH` or at `OPENSCAD_BIN`, and for slicing, OrcaSlicer,
 Bambu Studio, ElegooSlicer or Creality Print. They share a CLI, so any of them
-works, and all four are auto-detected along with the profiles they ship. Orca
-and its forks are preferred over Creality Print, whose CLI is broken headless
-on macOS; see testing status below. `SLICER_BIN` overrides the choice.
+works, and all four are auto-detected along with the profiles they ship.
+
+No slicer is preferred over another here. `setup_printer` probes each one it
+finds and then proves the winner by slicing a 20mm cube with your profiles, so
+which one you get is decided by which one works on your machine rather than by
+the order of a list in this repository. Creality Print's CLI is broken headless
+on macOS today, and that is something this discovers rather than something it
+asserts, so it corrects itself when upstream ships a fix; see testing status
+below. `SLICER_BIN` overrides the choice.
 
 ## Configure
 
@@ -74,6 +82,7 @@ one reads or writes.
 | `OPENSCAD_BIN`, `SLICER_BIN` | auto-detected | binary paths |
 | `OPENSCAD_WORKSPACE`, `SLICER_WORKSPACE` | `~/cad` | the sandbox |
 | `SLICER_PROFILE_DIRS` | auto-detected | extra profile roots |
+| `CADLOOP_MACHINE` | `$XDG_CONFIG_HOME/cadloop/machine.json` | where the machine record lives |
 | `OPENSCAD_TIMEOUT`, `SLICER_TIMEOUT` | 300, 600 | seconds before a kill |
 
 ## The servers
@@ -84,12 +93,34 @@ can look at what it built rather than inferring from numbers. `render` returns
 OpenSCAD's manifold report alongside a bounding box and volume, where
 `simple: yes` with a sensible volume count is the signal the mesh is printable.
 
-**slicer** exposes `slicer_info`, `list_profiles`, `check_bed_fit`,
-`slice_model`, `slice_summary` and `extract_gcode`. Call `slicer_info` first:
-the Orca-family CLI is undocumented, changes between releases, and Creality's
-fork diverges, so the flag list it reads off your install is more trustworthy
-than anything assumed. `slice_model` has an `extra_args` escape hatch and a
-`dry_run` mode.
+**slicer** exposes `setup_printer`, `machine_info`, `slicer_info`,
+`list_profiles`, `check_bed_fit`, `slice_model`, `slice_summary` and
+`extract_gcode`.
+
+Call `setup_printer()` once, with no arguments. It reads what your slicer is
+already configured with, resolves that to a machine, process and filament
+profile from one install, proves the combination by slicing a 20mm cube, and
+remembers it. It reports the printer, the quality and the filament it settled
+on, and stores nothing at all if the test slice fails. Pass `printer`,
+`filament` or `process` only to override one of those fields; the rest still
+come from your slicer's own settings. A profile you name is either used or
+refused by name, never quietly swapped for a different one.
+
+After that, `check_bed_fit` and `slice_model` need no profile arguments, which
+is the point: a caller cannot supply three profiles that disagree if it
+supplies none. Explicit arguments still win where you pass them.
+
+`machine_info` says which printer this workspace is set up for and whether it
+is still current. The record is a cache, not a source of truth. If the slicer
+moves, a profile is edited, or the slicer's version changes, every tool that
+would have used it refuses with the reason instead - `ok: null`, nothing
+written - until you run `setup_printer` again. A setup that no longer matches
+reality is never used to produce G-code.
+
+Call `slicer_info` before doing anything unusual: the Orca-family CLI is
+undocumented, changes between releases, and Creality's fork diverges, so the
+flag list it reads off your install is more trustworthy than anything assumed.
+`slice_model` has an `extra_args` escape hatch and a `dry_run` mode.
 
 `check_bed_fit` is where the two meet. The slicer will emit out-of-bounds
 G-code without complaining, so this measures the STL, reads `printable_area`
@@ -199,12 +230,19 @@ make smoke      # both servers, end to end
 ## Testing status
 
 `make smoke` drives both servers over real MCP stdio sessions and asserts on
-twenty-one behaviours: tool surface, defines reaching the script, a deliberate
-syntax error being caught, measured geometry matching known dimensions, an
-image coming back from preview, profile classification, argument ordering,
-archive parsing, G-code extraction, bed fit passing and failing, both
-`printable_area` spellings and an inherited bed, and the workspace guard
-rejecting traversal.
+thirty-seven behaviours: tool surface, defines reaching the script, a
+deliberate syntax error being caught, measured geometry matching known
+dimensions, an image coming back from preview, profile classification,
+argument ordering, archive parsing, G-code extraction, bed fit passing and
+failing, both `printable_area` spellings and an inherited bed, and the
+workspace guard rejecting traversal.
+
+It also drives the zero-argument path end to end against a slicer install
+built for that run alone: `setup_printer()` with no arguments has to name the
+printer, quality and filament it chose and store a triple from one install,
+and `check_bed_fit` and `slice_model` then have to work with no profile
+arguments at all. Editing a profile afterwards has to make both of them refuse
+and write nothing.
 
 The OpenSCAD half runs against a real OpenSCAD and skips if none is installed.
 The slicer half runs against a mock binary that emits an Orca-shaped help text
