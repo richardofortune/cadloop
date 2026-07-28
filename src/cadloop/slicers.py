@@ -9,6 +9,9 @@ itself when upstream ships a fix.
 
 from __future__ import annotations
 
+import glob as _glob
+import json
+import os
 import re
 from pathlib import Path
 
@@ -75,3 +78,61 @@ def probe(binary: str, timeout_s: int = 60) -> dict:
     m = re.search(r"(\d+\.\d+\.\d+(?:\.\d+)?)", log)
     return {"ok": True, "version": m.group(1) if m else None,
             "flags": flags, "reason": ""}
+
+
+# Where each slicer records what the user last selected. Globbed, because
+# Creality versions its config directory (6.0, 7.0, ...).
+CONFIG_CANDIDATES = [
+    ("creality", os.path.expanduser(
+        "~/Library/Application Support/Creality/Creality Print/*/Creality.conf")),
+    ("creality", os.path.expanduser(
+        "~/AppData/Roaming/Creality/Creality Print/*/Creality.conf")),
+    ("orca", os.path.expanduser(
+        "~/Library/Application Support/OrcaSlicer/OrcaSlicer.conf")),
+    ("orca", os.path.expanduser("~/.config/OrcaSlicer/OrcaSlicer.conf")),
+    ("bambu", os.path.expanduser(
+        "~/Library/Application Support/BambuStudio/BambuStudio.conf")),
+]
+
+
+def _selected(conf: dict) -> dict | None:
+    """Pull the selected presets out of a slicer config.
+
+    The Orca family stores them under "presets", with filaments as a list
+    because of multi-material machines. We take the first."""
+    p = conf.get("presets")
+    if not isinstance(p, dict):
+        return None
+    printer = p.get("machine") or p.get("printer")
+    if not isinstance(printer, str) or not printer:
+        return None
+    fil = p.get("filaments") or p.get("filament")
+    if isinstance(fil, list):
+        fil = fil[0] if fil else None
+    if isinstance(fil, dict):
+        fil = fil.get("filament")
+    process = p.get("process") or p.get("print")
+    return {"printer": printer,
+            "process": process if isinstance(process, str) else None,
+            "filament": fil if isinstance(fil, str) else None}
+
+
+def adopt() -> list[dict]:
+    """What the user already chose in their slicer's own interface.
+
+    Newest configuration first. This is a starting point, not the truth:
+    a stored filament can be two changes out of date, so the caller proves
+    it and reports what it settled on."""
+    out = []
+    for family, pattern in CONFIG_CANDIDATES:
+        for path in _glob.glob(pattern):
+            try:
+                sel = _selected(json.loads(Path(path).read_text(errors="replace")))
+            except Exception:
+                continue
+            if sel:
+                sel.update({"family": family, "source": path,
+                            "mtime": Path(path).stat().st_mtime})
+                out.append(sel)
+    out.sort(key=lambda r: r["mtime"], reverse=True)
+    return out
