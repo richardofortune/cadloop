@@ -554,3 +554,269 @@ def test_a_bed_with_a_height_but_no_width_refuses_rather_than_raising(
     assert r["machine"]["bed"] == {"z_mm": 250.0}
     assert r["parts"] == [] and r["plates"] == []
     assert not (rig / "plates").exists()
+
+
+# --------------------------------------------------------------------
+# the report, as a human reads it
+# --------------------------------------------------------------------
+
+def test_summary_fits_one_screen():
+    report = {
+        "ok": True, "reason": "", "output": "~/cad/plates",
+        "machine": {"name": "Ender-3 V3 SE", "bed": {"x_mm": 220.0, "y_mm": 220.0},
+                    "filament": "PLA"},
+        "parts": [{"name": f"w{i}", "fits": True} for i in range(16)],
+        "plates": [{"name": f"plate{i}", "parts": ["a", "b"], "minutes": 90,
+                    "filament_m": 7.2, "on_bed": True} for i in range(6)],
+        "arranged": ["w80 turned 90 degrees, it does not fit square"],
+        "attention": ["plate3 sits 9.7 mm from the bed edge, consider a brim"],
+        "totals": {"plates": 6, "minutes": 788, "filament_m": 66.5},
+    }
+    text = pipeline.summary(report)
+    assert len(text.splitlines()) <= 30, text
+    assert "Ender-3 V3 SE" in text
+    assert "w80 turned" in text
+    assert "brim" in text
+
+
+def test_summary_of_a_refusal_says_what_to_do():
+    text = pipeline.summary({"ok": None, "reason": "no printer set up yet, "
+                                                   "run setup_printer"})
+    assert "setup_printer" in text
+    assert len(text.splitlines()) <= 5
+
+
+def test_a_plate_off_the_bed_is_a_failure_not_a_note():
+    report = {"ok": False, "reason": "plate2 prints off the bed",
+              "plates": [{"name": "plate2", "on_bed": False}],
+              "attention": [], "arranged": []}
+    assert "off the bed" in pipeline.summary(report)
+
+
+def nxt(report):
+    """The summary's last block: what to do next, as one string.
+
+    It is the last thing in the text and it wraps, so it is everything from
+    the "next:" line to the end."""
+    lines = pipeline.summary(report).splitlines()
+    starts = [i for i, l in enumerate(lines) if l.strip().startswith("next:")]
+    assert len(starts) == 1, "\n".join(lines)
+    return " ".join(" ".join(lines[starts[0]:]).split())
+
+
+# The three answers have to look like three answers. A reader skimming the
+# first line is the case this is written for: "could not tell" arriving in the
+# same clothes as "checked and fine" is the whole failure mode.
+
+def test_the_three_answers_are_visibly_different():
+    base = {"reason": "something", "machine": None, "parts": [], "plates": [],
+            "arranged": [], "attention": [], "output": None}
+    first = {ok: pipeline.summary({**base, "ok": ok}).splitlines()[0]
+             for ok in (True, False, None)}
+    assert len(set(first.values())) == 3
+    # and the word for each is not a substring of another, so no skim can
+    # turn one into another
+    words = [line.split()[0] for line in first.values()]
+    assert len(set(words)) == 3
+    assert not any(a != b and a in b for a in words for b in words)
+    assert first[None].split()[0] == "UNKNOWN"
+
+
+def test_every_ending_states_a_next_action(rig, tmp_path, monkeypatch):
+    """Whatever happened, the summary names the call to make next.
+
+    Each of these is a real run, not a hand-built report, because the value
+    being checked is that the next action follows from what actually
+    happened. A summary that says "fix it" is not a next action, so the
+    assertion is on the words a caller would have to act on."""
+    # success
+    assert "print" in nxt(pipeline.run("m.scad", rig, ["30"]))
+    # a part too big for the bed: the model has to change, and we say so
+    text = nxt(pipeline.run("m.scad", rig, ["huge"]))
+    assert ".scad" in text and "make_printable" in text
+    # a part that did not render
+    assert ".scad" in nxt(pipeline.run("m.scad", rig, ["broken"]))
+    # a plate off the bed: do not print it
+    monkeypatch.setenv("SLICER_OFFSET", "200")
+    text = nxt(pipeline.run("m.scad", rig, ["30"]))
+    assert "do not print" in text and "plate_1" in text
+    monkeypatch.delenv("SLICER_OFFSET")
+    # a plate nobody can vouch for
+    monkeypatch.setenv("SLICER_NO_MARKER", "1")
+    assert "do not print" in nxt(pipeline.run("m.scad", rig, ["30"]))
+    monkeypatch.delenv("SLICER_NO_MARKER")
+    # a slice that failed outright
+    monkeypatch.setenv("SLICER_FAIL", "1")
+    assert "make_printable" in nxt(pipeline.run("m.scad", rig, ["30"]))
+    monkeypatch.delenv("SLICER_FAIL")
+
+
+def test_every_refusal_states_a_next_action(rig, tmp_path, monkeypatch):
+    def refused(report):
+        assert report["ok"] is None, report["reason"]
+        return nxt(report)
+
+    monkeypatch.setenv("CADLOOP_MACHINE", str(tmp_path / "gone.json"))
+    assert "run setup_printer" in refused(pipeline.run("m.scad", rig, ["30"]))
+
+    # A record that is there but unreadable is not a record that is missing,
+    # and the thing to do about it is not the same thing.
+    (tmp_path / "gone.json").write_text("{ not json")
+    text = refused(pipeline.run("m.scad", rig, ["30"]))
+    assert "delete" in text.lower() and "setup_printer" in text
+    (tmp_path / "gone.json").unlink()
+
+    monkeypatch.setenv("CADLOOP_MACHINE", str(tmp_path))
+    assert "CADLOOP_MACHINE" in refused(pipeline.run("m.scad", rig, ["30"]))
+    monkeypatch.setenv("CADLOOP_MACHINE", str(tmp_path / "machine.json"))
+
+    assert "workspace" in refused(pipeline.run("../m.scad", rig, ["30"]))
+    assert "workspace" in refused(pipeline.run("gone.scad", rig, ["30"]))
+    assert "no parts" in refused(pipeline.run("m.scad", rig, []))
+
+    monkeypatch.setenv("OPENSCAD_BIN", str(tmp_path / "no-such-openscad"))
+    assert "OPENSCAD_BIN" in refused(pipeline.run("m.scad", rig, ["30"]))
+    monkeypatch.delenv("OPENSCAD_BIN")
+
+
+def test_make_printable_hands_the_summary_back_with_the_report(rig,
+                                                               monkeypatch):
+    """The tool's caller is usually a model reading JSON. It gets the screen
+    of text as well as the facts, because "read the report and render it
+    yourself" is fetching something, and A8 is about not having to."""
+    monkeypatch.setattr(slicer_server, "WORKSPACE", rig)
+    got = slicer_server.make_printable("m.scad", ["30"])
+    assert got["ok"] is True, got["reason"]
+    assert got["summary"] == pipeline.summary(got)
+    assert len(got["summary"].splitlines()) <= 30
+    json.loads(json.dumps(got))
+
+
+def test_a_report_trimmed_to_its_bones_still_reads():
+    """summary() renders reports it did not build — a stored one, a trimmed
+    one, one an embedder assembled. A field the report never mentions is not
+    the same as a field it reports as empty, and absence must not be read as
+    bad news."""
+    text = pipeline.summary({"ok": True, "output": "/tmp/x",
+                             "plates": [{"name": "plate_1", "on_bed": True}],
+                             "totals": {"plates": 1}})
+    assert "produced no G-code" not in text
+    assert "not proven" not in text
+    assert "every extruding move on the bed" in text
+    assert "next: print the plates in /tmp/x" in text
+    assert len(text.splitlines()) <= 30
+
+
+def test_the_top_line_is_what_happened(rig, tmp_path, monkeypatch):
+    """The first line carries the report's own reason, not a paraphrase of
+    it. A caller who reads one line has read the finding."""
+    monkeypatch.setenv("CADLOOP_MACHINE", str(tmp_path / "none.json"))
+    r = pipeline.run("m.scad", rig, ["30"])
+    assert pipeline.summary(r).splitlines()[0] == "UNKNOWN " + r["reason"]
+
+    monkeypatch.setenv("SLICER_OFFSET", "200")
+    monkeypatch.setenv("CADLOOP_MACHINE", str(tmp_path / "machine.json"))
+    r = pipeline.run("m.scad", rig, ["30"])
+    assert pipeline.summary(r).splitlines()[0] == "FAILED  " + r["reason"]
+
+
+def test_a_plate_with_no_gcode_is_a_failure_not_an_unproven_plate(rig,
+                                                                  monkeypatch):
+    """Sliced with nothing in the archive is not the same as sliced with a
+    file nobody can vouch for. There is no file here, so sending a reader to
+    go and look at one is sending them after something that does not
+    exist."""
+    monkeypatch.setenv("SLICER_NO_GCODE", "1")
+    r = pipeline.run("m.scad", rig, ["30"])
+    text = pipeline.summary(r)
+    assert text.splitlines()[0].startswith("FAILED")
+    assert "1 of 1" in text                  # it did slice
+    assert "produced no G-code" in text      # and produced nothing
+    assert "not proven on the bed" not in text
+    action = nxt(r)
+    assert "no G-code" in action and "make_printable" in action
+    assert "Read the G-code" not in action
+
+
+def test_an_unproven_plate_never_reads_as_a_proven_one(rig, monkeypatch):
+    """The mistake this is written against: "could not tell" wearing the
+    clothes of "checked and fine". A plate whose G-code says nothing a
+    reader can vouch for is not off the bed, and it is not ready either."""
+    monkeypatch.setenv("SLICER_NO_MARKER", "1")
+    text = pipeline.summary(pipeline.run("m.scad", rig, ["30"]))
+    assert text.splitlines()[0].startswith("UNKNOWN")
+    assert "not proven on the bed" in text
+    assert "prints off the bed" not in text
+    assert "every extruding move on the bed" not in text
+    assert "ready" not in text
+
+
+def test_the_summary_never_runs_past_a_screen(rig, monkeypatch):
+    """Sixteen rotations and sixteen notes is more than a screen holds, so
+    the sections are cut to a count. Thirty lines is the promise; the parts
+    are counted rather than listed to keep it."""
+    report = {
+        "ok": True, "reason": "", "output": "~/cad/plates",
+        "machine": {"name": "Ender-3 V3 SE",
+                    "bed": {"x_mm": 220.0, "y_mm": 220.0}, "filament": "PLA"},
+        "parts": [{"name": f"w{i}", "fits": True} for i in range(40)],
+        "plates": [{"name": f"plate_{i}", "parts": ["a"], "on_bed": True}
+                   for i in range(12)],
+        "arranged": [f"w{i} turned 90 degrees, it does not fit square"
+                     for i in range(16)],
+        "attention": [f"plate_{i} sits 1.2 mm from the bed edge, consider a "
+                      f"brim on a part this close to the edge" for i in range(16)],
+        "totals": {"plates": 12, "minutes": 2000, "filament_m": 120.0},
+    }
+    text = pipeline.summary(report)
+    lines = text.splitlines()
+    assert len(lines) <= 30, text
+    # cut, not dropped: what is not shown is still counted
+    assert any("more" in l for l in lines)
+    # and both halves survive the cut
+    assert "arranged for you:" in text and "worth a look:" in text
+    assert "next:" in text
+
+
+def test_a_turned_part_is_named_in_the_summary(rig, monkeypatch):
+    """arranged is what A6 promises: the pipeline may turn a part, and when
+    it does, the report says so and says why. The rotation branch is
+    unreachable on a square bed, so this bed is not square."""
+    monkeypatch.setattr(machine, "bed", lambda *a, **k: {
+        "x_mm": 300.0, "y_mm": 150.0, "z_mm": 250.0, "origin": [0.0, 0.0]})
+    real_render = pipeline._render
+
+    def oblong(binary, source, outdir, workspace, name, define):
+        rec = real_render(binary, source, outdir, workspace, name, define)
+        if name == "oblong":
+            rec["size_mm"] = [120.0, 280.0, 10.0]
+        return rec
+
+    monkeypatch.setattr(pipeline, "_render", oblong)
+    r = pipeline.run("m.scad", rig, ["oblong"])
+    assert r["ok"] is True, r["reason"]
+    text = pipeline.summary(r)
+    assert "arranged for you:" in text
+    assert "oblong turned 90 degrees, it does not fit square" in text
+    assert len(text.splitlines()) <= 30
+
+
+def test_the_summary_reports_what_came_out_not_what_was_asked_for(rig,
+                                                                  monkeypatch):
+    monkeypatch.setenv("SLICER_FAIL", "1")
+    text = pipeline.summary(pipeline.run("m.scad", rig, ["30"]))
+    # nothing printable came out, so nothing is offered as ready
+    assert "ready" not in text
+    assert "FAILED" in text.splitlines()[0]
+
+
+def test_a_summary_of_a_real_run_says_where_the_plates_are(rig):
+    r = pipeline.run("m.scad", rig, ["30", "40"])
+    text = pipeline.summary(r)
+    assert text.splitlines()[0].startswith("ok")
+    assert "Fake 0.4 nozzle" in text
+    assert "220 x 220" in text
+    assert r["output"] in text
+    assert "2h04m" in text and "9.94 m PLA" in text
+    assert "every extruding move on the bed" in text
+    assert len(text.splitlines()) <= 30

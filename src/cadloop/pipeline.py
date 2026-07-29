@@ -25,6 +25,7 @@ could not read well enough to vouch for.
 from __future__ import annotations
 
 import re
+import textwrap
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -45,6 +46,10 @@ RENDER_TIMEOUT_S = 900
 # Closer than this to the edge and a warped first layer starts to matter.
 # Not a failure — the part is on the bed — but worth a human's eye.
 BRIM_MARGIN_MM = 10.0
+# What summary() promises: one screen, and it holds however long the lists
+# get, because the lists are what get cut.
+SUMMARY_LINES = 30
+SUMMARY_WIDTH = 78
 
 _NUMERIC = re.compile(r"^-?\d+(?:\.\d+)?$")
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -464,3 +469,329 @@ def _slice_plate(index: int, plate: dict[str, Any],
             attention.append(f"{name} sits {gap:.1f} mm from the bed edge, "
                              f"consider a brim")
     return entry, None
+
+
+# --------------------------------------------------------------------
+# the report, as a human reads it
+# --------------------------------------------------------------------
+#
+# Everything below renders the report and adds nothing to it. Two things
+# decide the shape.
+#
+# The three answers must look like three answers. ok, FAILED and UNKNOWN are
+# three different words in the same column, no one of them a substring of
+# another, so a reader skimming the first line cannot turn "could not tell"
+# into "checked and fine". That mistake is the expensive one: a plate nobody
+# proved reads exactly like a plate that passed, right up until it prints.
+#
+# And the next action is stated, never implied. A reader — person or model —
+# should not have to work out what to do from a diagnosis, or fetch anything
+# to decide. So the last line is always a call to make: print these, run
+# setup_printer, fix this in the .scad and come back. What is not shown is
+# counted rather than dropped, because "and 12 more" is a fact and silence
+# is not.
+
+_STATUS = {True: "ok", False: "FAILED", None: "UNKNOWN"}
+
+# The refusals run() can produce, each with the thing to do about it. Matched
+# on a phrase from the reason rather than carried in the report, because a
+# summary has to work on a report it did not build — a refusal is often just
+# an ok and a reason, and that has to be enough.
+_NEXT_BY_REASON: tuple[tuple[str, str], ...] = (
+    ("cannot be read as a printer setup",
+     "delete the machine record named above, then run setup_printer."),
+    ("cannot read the machine record",
+     "make the machine record above readable, or delete it, then run "
+     "setup_printer."),
+    ("no longer matches what is on disk",
+     "run setup_printer again. The slicer or one of its profiles moved since "
+     "this printer was set up, and nothing is sliced against a setup that "
+     "no longer matches."),
+    ("declares no printable area",
+     "run setup_printer and choose a printer whose profile declares a bed. "
+     "Nothing can be checked against this one."),
+    ("CADLOOP_MACHINE",
+     "point CADLOOP_MACHINE at a file this can write, or unset it to use the "
+     "default location, then run setup_printer."),
+    ("setup_printer", "run setup_printer, then call make_printable again."),
+    ("outside the workspace",
+     "call make_printable with a path inside the workspace. Nothing outside "
+     "it is readable."),
+    ("is not a file in the workspace",
+     "check the name, then call make_printable again with a .scad that is in "
+     "the workspace."),
+    ("no OpenSCAD to render with",
+     "install OpenSCAD, or point OPENSCAD_BIN at it, then call make_printable "
+     "again."),
+    ("no parts named",
+     "name the parts you want, or call make_printable with no parts at all to "
+     "render the whole file once."),
+    ("no part reached a plate",
+     "nothing reached a plate. Fix the parts named above in the .scad, then "
+     "call make_printable again."),
+)
+
+
+def _n(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _mm(value: Any) -> str:
+    """220.0 as "220", 63.17 as "63.17"."""
+    number = float(value)
+    return str(int(number)) if number == int(number) else f"{number:g}"
+
+
+def _hm(minutes: Any) -> str:
+    total = int(minutes)
+    return f"{total}m" if total < 60 else f"{total // 60}h{total % 60:02d}m"
+
+
+def _wrapped(text: str, indent: str = "", hang: str | None = None) -> list[str]:
+    """One field, as the lines it takes. Wrapped rather than truncated: the
+    line budget is spent on the lists, which can be counted instead of
+    listed, not on a sentence that would lose its ending."""
+    lines = textwrap.wrap(" ".join(str(text).split()), width=SUMMARY_WIDTH,
+                          initial_indent=indent,
+                          subsequent_indent=indent if hang is None else hang,
+                          break_long_words=False, break_on_hyphens=False)
+    return lines or [indent + str(text)]
+
+
+def _fact(label: str, value: str) -> list[str]:
+    return _wrapped(value, f"  {(label + ' ').ljust(14, '.')} ", " " * 17)
+
+
+def _plate_name(plate: dict[str, Any]) -> str:
+    return str(plate.get("name") or "a plate")
+
+
+def _was_sliced(plate: dict[str, Any]) -> bool:
+    """Whether a plate record describes something the slicer produced.
+
+    run() always writes "sliced", so this only matters for a report built by
+    hand or trimmed down. Anything known about where a plate prints, or any
+    G-code named, means it was sliced; nothing known means it was not."""
+    if "sliced" in plate:
+        return bool(plate["sliced"])
+    return plate.get("on_bed") is not None or bool(plate.get("gcode"))
+
+
+def _unprintable(plates: list[dict[str, Any]],
+                 ) -> tuple[list[str], list[str]]:
+    """Plates that were sliced and still cannot be printed, split into the
+    two answers they are.
+
+    A plate whose archive held no G-code has no deliverable: that is a
+    failure, and there is no file for anyone to go and look at. A plate with
+    G-code on disk that says nothing a reader can vouch for is unknown, and
+    the file is right there. Both carry on_bed None, so only the G-code
+    tells them apart — and a report that never mentioned one is not
+    claiming there is none, so an absent key means neither."""
+    sliced = [p for p in plates if _was_sliced(p)]
+    void = [p for p in sliced if "gcode" in p and not p["gcode"]]
+    empty = {id(p) for p in void}
+    return ([_plate_name(p) for p in void],
+            [_plate_name(p) for p in sliced
+             if p.get("on_bed") is None and id(p) not in empty])
+
+
+def _by_reason(reason: str) -> str | None:
+    for phrase, action in _NEXT_BY_REASON:
+        if phrase in reason:
+            return action
+    return None
+
+
+def _next_action(report: dict[str, Any]) -> str:
+    """The call to make next, in words a caller can act on without asking
+    anything else. Never a diagnosis: the top line already carries that."""
+    ok = report.get("ok")
+    reason = " ".join((report.get("reason") or "").split())
+    parts = report.get("parts") or []
+    plates = report.get("plates") or []
+    output = report.get("output")
+    where = f"in {output}" if output else "this run wrote"
+
+    if ok is True:
+        if report.get("attention"):
+            return (f"print the plates {where}. Nothing above stops the print "
+                    f"— the notes are advisories — so read them and go.")
+        return f"print the plates {where}. Nothing needs a decision."
+
+    # A refusal names its own remedy, and it outranks anything found earlier:
+    # no printer means no plate, however many parts rendered cleanly first.
+    if ok is None:
+        refusal = _by_reason(reason)
+        if refusal:
+            return refusal
+
+    no_mesh = [str(p.get("name")) for p in parts if p.get("rendered") is False]
+    too_big = [str(p.get("name")) for p in parts if p.get("fits") is False]
+    off = [_plate_name(p) for p in plates if p.get("on_bed") is False]
+    unsliced = [_plate_name(p) for p in plates if not _was_sliced(p)]
+    void, unproven = _unprintable(plates)
+
+    if no_mesh:
+        return (f"fix {_names(no_mesh)} in the .scad — the note above is what "
+                f"OpenSCAD said — then call make_printable again.")
+    if too_big:
+        return (f"{_names(too_big)} is bigger than this bed. Make it smaller "
+                f"or split it in the .scad, then call make_printable again. "
+                f"Nothing was resized for you.")
+    if off:
+        return (f"do not print {_names(off)}. Call make_printable again with "
+                f"fewer parts, so that plate carries less, and check it again.")
+    if unsliced:
+        return (f"{_names(unsliced)} did not slice, and the note above says "
+                f"why. Fix that, then call make_printable again.")
+    if void:
+        # Sliced, and nothing came out of the archive. There is no file to
+        # read, so "go and check the G-code" would send a caller after
+        # something that does not exist.
+        return (f"{_names(void)} produced no G-code, so there is nothing to "
+                f"print. Call make_printable again; if it repeats, the "
+                f"slicer is writing an archive this cannot read.")
+    if unproven:
+        return (f"do not print {_names(unproven)} yet: nothing proved where it "
+                f"lands. Read the G-code {where}, or slice that plate on its "
+                f"own and look again.")
+
+    known = _by_reason(reason)
+    if known:
+        return known
+    if plates or parts:
+        return ("nothing here is printable. The top line says why. Fix that, "
+                "then call make_printable again.")
+    return ("nothing was made and nothing was changed. The top line says why. "
+            "Fix that, then call make_printable again.")
+
+
+def _headline(report: dict[str, Any]) -> str:
+    reason = " ".join((report.get("reason") or "").split())
+    if reason:
+        return reason
+    if report.get("ok") is True:
+        parts, plates = report.get("parts") or [], report.get("plates") or []
+        made = [_n(len(parts), "part")] if parts else []
+        made += [_n(len(plates), "plate")] if plates else []
+        return (" on ".join(made) or "done") + \
+               (", every plate proven on the bed" if plates else "")
+    return ("nothing came out of this run" if report.get("ok") is False
+            else "nothing was made, and nothing was changed")
+
+
+def _facts(report: dict[str, Any]) -> list[str]:
+    """What it did, one fact to a line, each omitted when the report does not
+    carry it. Parts are counted rather than enumerated: sixteen names would
+    cost half the screen and say less than "16 of 16 fit"."""
+    lines: list[str] = []
+    printer = report.get("machine") or {}
+    parts = report.get("parts") or []
+    plates = report.get("plates") or []
+    totals = report.get("totals") or {}
+    output = report.get("output")
+
+    if printer:
+        bed = printer.get("bed") or {}
+        bits = [str(printer.get("name") or "an unnamed printer")]
+        if bed.get("x_mm") and bed.get("y_mm"):
+            bits.append(f"{_mm(bed['x_mm'])} x {_mm(bed['y_mm'])} mm bed")
+        if printer.get("filament"):
+            bits.append(str(printer["filament"]))
+        lines += _fact("machine", ", ".join(bits))
+
+    if parts:
+        fits = sum(1 for p in parts if p.get("fits") is True)
+        text = f"{fits} of {len(parts)} fit this bed"
+        big = sum(1 for p in parts if p.get("fits") is False)
+        gone = sum(1 for p in parts if p.get("fits") is None)
+        if big:
+            text += f", {big} too big"
+        if gone:
+            text += f", {gone} did not render"
+        lines += _fact("parts", text)
+
+    if plates:
+        held = sum(len(p.get("parts") or []) for p in plates)
+        lines += _fact("plates", f"{_n(held, 'part')} packed onto {len(plates)}"
+                                 if held else _n(len(plates), "plate"))
+
+        sliced = [p for p in plates if _was_sliced(p)]
+        off = [_plate_name(p) for p in plates if p.get("on_bed") is False]
+        void, unproven = _unprintable(plates)
+        told = [f"{len(sliced)} of {len(plates)}"]
+        if off:
+            told.append(f"{_names(off)} prints off the bed")
+        if void:
+            told.append(f"{_names(void)} produced no G-code")
+        if unproven:
+            told.append(f"{_names(unproven)} not proven on the bed")
+        if not off and not void and not unproven and sliced:
+            told.append("every extruding move on the bed")
+        lines += _fact("sliced", ", ".join(told))
+
+    if report.get("ok") is True and totals.get("plates"):
+        # "ready" is a promise, so it is made only when the run kept it. A
+        # partial run still says where its files are, under a word that
+        # claims nothing about them.
+        bits = [str(output)] if output else []
+        if totals.get("minutes"):
+            bits.append(_hm(totals["minutes"]))
+        if totals.get("filament_m"):
+            bits.append(f"{_mm(totals['filament_m'])} m "
+                        f"{printer.get('filament') or 'filament'}")
+        lines += _fact("ready", ", ".join(bits))
+    elif output:
+        lines += _fact("files", str(output))
+    return lines
+
+
+def _section(title: str, items: list[str], budget: int) -> list[str]:
+    """A titled list inside a line budget, with the remainder counted.
+
+    Costs a blank line and the title before any item, so a budget under
+    three lines buys nothing worth printing and the whole section becomes
+    its own count."""
+    if budget < 3:
+        return ["", f"  {title} {len(items)} in the report"]
+    lines = ["", f"  {title}"]
+    left, shown = budget - 2, 0
+    for item in items:
+        wrapped = _wrapped(item, "    ", "      ")
+        # Keep a line back for the count unless this is the last item.
+        if len(wrapped) + (1 if shown + 1 < len(items) else 0) > left:
+            break
+        lines += wrapped
+        left -= len(wrapped)
+        shown += 1
+    if shown < len(items):
+        lines.append(f"    and {len(items) - shown} more")
+    return lines
+
+
+def summary(report: dict[str, Any]) -> str:
+    """The report as one screen of text, ending in what to do next.
+
+    Takes any report run() produces, and any subset of one: a refusal is
+    often nothing but an ok and a reason, and that has to render too."""
+    status = _STATUS.get(report.get("ok"), "UNKNOWN")
+    head = _wrapped(_headline(report), f"{status:<7} ", " " * 8)
+    facts = _facts(report)
+    if facts:
+        head += [""] + facts
+    tail = [""] + _wrapped(f"next: {_next_action(report)}", "  ", " " * 8)
+
+    blocks = [(title, list(items)) for title, items in
+              (("arranged for you:", report.get("arranged") or []),
+               ("worth a look:", report.get("attention") or [])) if items]
+    body: list[str] = []
+    room = SUMMARY_LINES - len(head) - len(tail)
+    for done, (title, items) in enumerate(blocks):
+        # An even split of what is left, and whatever the first section does
+        # not spend goes to the second rather than to nobody.
+        share = room // (len(blocks) - done)
+        rendered = _section(title, items, share)
+        body += rendered
+        room -= len(rendered)
+    return "\n".join(head + body + tail)

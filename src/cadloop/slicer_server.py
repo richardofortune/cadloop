@@ -624,7 +624,14 @@ def make_printable(source: str, parts: list[str] | None = None) -> dict[str, Any
     human. Never edits the model: a part that cannot print as designed is
     reported, not altered."""
     from . import pipeline
-    return pipeline.run(source, WORKSPACE, parts)
+    report = pipeline.run(source, WORKSPACE, parts)
+    # The report carries every fact; "summary" is the one screen of it that
+    # a reader acts on, and it travels with the report because the caller
+    # on the other side of this is usually a model reading JSON. Asking it
+    # to render the report itself to find out what to do next is asking it
+    # to fetch something, which is the one thing the summary exists to
+    # avoid.
+    return {**report, "summary": pipeline.summary(report)}
 
 
 # --------------------------------------------------------------------
