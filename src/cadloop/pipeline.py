@@ -128,12 +128,29 @@ def _bed(rec: dict[str, Any]) -> dict[str, Any]:
     printable_area from, so the cache can be right about the file and wrong
     about the bed. Two tools in one package must not disagree about how big
     the bed is.
+
+    The two are merged field by field rather than one replacing the other,
+    because bed_of() returns a bed with z_mm None when no ancestor declares
+    printable_height, and taking that bed whole would throw away a cached
+    height that was read when one did. Losing the height is not a harmless
+    gap: gcode.fits skips the Z bound entirely when it has no number, so a
+    silently absent height turns off a check rather than failing one.
     """
     try:
         live = bed_of((rec.get("profiles") or {}).get("machine") or "")
     except Exception:
         live = {}
-    return live or ((rec.get("derived") or {}).get("bed") or {})
+    bed = dict(((rec.get("derived") or {}).get("bed") or {}))
+    bed.update({k: v for k, v in live.items() if v is not None})
+    return bed
+
+
+def _record_exists() -> bool:
+    """Whether there is a machine record file at all, however bad."""
+    try:
+        return _machine.record_path().is_file()
+    except Exception:
+        return False
 
 
 def _plate_facts(summary: dict[str, Any] | None) -> tuple[int | None,
@@ -235,7 +252,16 @@ def run(source: str, workspace: str | Path,
     except _machine.RecordError as exc:
         return _refuse(str(exc))
     if rec is None:
-        return _refuse("no printer set up yet, run setup_printer")
+        # load() answers None for two different situations: nothing has been
+        # set up, and something was set up but the file no longer parses. It
+        # refuses either way, but "run setup_printer" is the right next
+        # action only for the first; for the second the user wants to know
+        # their record is damaged, not be told they never made one.
+        return _refuse("no printer set up yet, run setup_printer"
+                       if not _record_exists() else
+                       f"the machine record at {_machine.record_path()} is "
+                       f"there but cannot be read as a printer setup. Delete "
+                       f"it and run setup_printer.")
     why = _machine.staleness(rec)
     if why:
         return _refuse("the stored printer no longer matches what is on "
@@ -323,8 +349,14 @@ def run(source: str, workspace: str | Path,
     unsliced = [p["name"] for p in plates if not p["sliced"]]
     unrendered = [p["name"] for p in rendered if not p["rendered"]]
     unfit = [m["name"] for m in packed["unplaceable"]]
+    # A plate that sliced but yielded no G-code file has no deliverable, so
+    # it is a failure. A plate whose G-code is on disk but says nothing a
+    # reader can vouch for is unknown. The two look alike in the plate
+    # record — both have on_bed None — and the file is what tells them
+    # apart, so that is what is asked.
+    no_gcode = [p["name"] for p in plates if p["sliced"] and not p["gcode"]]
     unproven = [p["name"] for p in plates
-                if p["sliced"] and p["on_bed"] is None]
+                if p["sliced"] and p["gcode"] and p["on_bed"] is None]
 
     report = _blank_report()
     report.update({
@@ -335,7 +367,10 @@ def run(source: str, workspace: str | Path,
         "attention": attention,
         "output": str(outdir),
         "totals": {
-            "plates": len(plates),
+            # What came out, not what was attempted: a plate that failed to
+            # slice is in plates[] with its reason, but it is not a plate
+            # anyone can print.
+            "plates": sum(1 for p in plates if p["sliced"]),
             "minutes": sum(p["minutes"] or 0 for p in plates),
             "filament_m": round(sum(p["filament_m"] or 0.0 for p in plates), 2),
         },
@@ -346,13 +381,21 @@ def run(source: str, workspace: str | Path,
         problems.append(f"{_names(off)} prints off the bed")
     if unsliced:
         problems.append(f"{_names(unsliced)} did not slice")
+    if no_gcode:
+        problems.append(f"{_names(no_gcode)} sliced but produced no G-code")
     if unrendered:
         problems.append(f"{_names(unrendered)} did not render")
     if unfit:
         problems.append(f"{_names(unfit)} does not fit this bed")
 
     if refusal is not None:
-        report["ok"], report["reason"] = None, refusal
+        # The refusal is real and it stopped the run, so ok stays None. It
+        # does not get to erase what was already established, though: parts
+        # that did not render and parts too big for the bed were checked
+        # and found wanting before the slicer was ever asked, and demoting
+        # those facts to "unknown" loses work the caller has to redo.
+        report["ok"] = None
+        report["reason"] = "; ".join(problems + [refusal])
     elif problems:
         report["ok"], report["reason"] = False, "; ".join(problems)
     elif not plates:
@@ -430,6 +473,19 @@ def _slice_plate(index: int, plate: dict[str, Any],
         entry["reason"] = fit["reason"]
         attention.append(f"{name} could not be proven on the bed: "
                          f"{fit['reason']}")
+    elif not bed.get("z_mm"):
+        # X and Y are proven; Z is not, because gcode.fits has no height to
+        # compare against and quietly skips that bound when it has none. A5
+        # promises proof, and two axes out of three is not it, so this plate
+        # is unknown rather than passed. The G-code is still on disk and
+        # still probably fine — that is exactly what "unknown" means.
+        entry["on_bed"] = None
+        entry["reason"] = (f"x and y are inside the bed, but this printer's "
+                           f"profile declares no printable height, so the "
+                           f"{fit['extent']['z_max']} mm this plate reaches "
+                           f"in z is unchecked")
+        attention.append(f"{name} could not be proven on the bed: "
+                         f"{entry['reason']}")
     else:
         extent = fit["extent"]
         gap = min(extent["x"][0], bed["x_mm"] - extent["x"][1],
