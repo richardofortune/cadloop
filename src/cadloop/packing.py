@@ -27,9 +27,22 @@ def pack(parts: list[dict[str, Any]], bed: dict[str, Any],
     """Lay parts out on as few plates as a shelf packer manages.
 
     Returns placements in bed coordinates. A part larger than the bed in
-    both orientations is unplaceable and is reported, never squeezed."""
+    both orientations is unplaceable and is reported, never squeezed.
+    Each placed part's "w"/"d" are its on-bed footprint *after* any
+    rotation has already been applied — a consumer never needs to swap
+    them itself based on "rotated".
+
+    A bed with no printable-area geometry (e.g. a machine profile missing
+    x_mm/y_mm) is not an error: every part is reported unplaceable, naming
+    the missing bed, rather than raising or silently returning no plates."""
     if not parts:
         return {"plates": [], "unplaceable": []}
+    if "x_mm" not in bed or "y_mm" not in bed:
+        return {"plates": [], "unplaceable": [
+            {"name": p["name"],
+             "reason": "bed has no printable-area geometry (missing x_mm/y_mm)"}
+            for p in parts
+        ]}
     uw, ud = _usable(bed, margin_mm)
 
     todo, unplaceable = [], []
