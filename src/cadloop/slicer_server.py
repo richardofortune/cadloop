@@ -39,7 +39,7 @@ from . import machine as _machine
 from . import slicers as _slicers
 from .common import (find_binary, measure_stl, run as _sh,
                      safe_path, tail as _tail_, workspace)
-from .profiles import (bed_of, classify, machine_facts, profile_roots,
+from .profiles import (classify, machine_facts, profile_roots,
                        reset_cache, root_of)
 
 WORKSPACE = workspace("SLICER_WORKSPACE", "cad")
@@ -395,34 +395,77 @@ def check_bed_fit(model: str, machine_profile: str | None = None,
     try:
         profs, warn = _active_profiles(machine_profile, needs=("machine",))
     except (Refused, _machine.RecordError) as exc:
-        return _refusal(exc)
+        # height_checked rides along on every return, including the ones that
+        # answer nothing, so a caller can read it without guarding first.
+        return {**_refusal(exc), "height_checked": False}
     stl = _safe(model)
     mesh = measure_stl(stl)
     if not mesh.get("triangles"):
         return {"ok": None, "reason": "no geometry in that mesh", "mesh": mesh,
+                "height_checked": False, "stale": warn}
+    # One answer to "how big is this bed", shared with the pipeline, so the
+    # two tools cannot disagree: the live profile over the record's cached
+    # copy, merged field by field. A profile named explicitly is read on its
+    # own terms, since the stored record describes a different machine.
+    bed = _machine.bed(None if machine_profile else _machine.load(),
+                       machine_profile=profs["machine"])
+    # A bed can be non-empty and still have nothing to measure against: a
+    # record whose cached bed kept a height after the profile stopped
+    # declaring a printable_area merges to {"z_mm": 250.0}, which is truthy
+    # and has no width. Guard on the dimensions this needs, not on the dict
+    # having something in it, or the next line raises KeyError out of an MCP
+    # tool call instead of saying what is wrong.
+    if not bed.get("x_mm") or not bed.get("y_mm"):
+        return {"ok": None,
+                "reason": ("no printable_area in machine profile" if not bed
+                           else "this machine profile's printable area has no "
+                                "width or depth, so there is nothing to "
+                                "measure a footprint against"),
+                "mesh": mesh, "bed": bed, "height_checked": False,
                 "stale": warn}
-    # Read the bed off the profile rather than the record's cached copy: the
-    # fingerprint covers the machine profile but not the parents it inherits
-    # its printable_area from, so the cache can be right about the file and
-    # wrong about the bed. The cache is only a fallback for a profile that
-    # declares no bed anywhere.
-    bed = bed_of(profs["machine"])
-    if not bed and not machine_profile:
-        bed = ((_machine.load() or {}).get("derived") or {}).get("bed") or {}
-    if not bed:
-        return {"ok": None, "reason": "no printable_area in machine profile",
-                "mesh": mesh, "stale": warn}
     sx, sy, sz = mesh["size_mm"]
     diag = (sx + sy) * 0.70711        # footprint of a 45 degree rotation
     fits = (sx + margin_mm <= bed["x_mm"] and sy + margin_mm <= bed["y_mm"])
     fits_rot = (diag + margin_mm <= bed["x_mm"]
                 and diag + margin_mm <= bed["y_mm"])
-    tall = bed["z_mm"] is not None and sz > bed["z_mm"]
+    height = bed.get("z_mm")
+    tall = height is not None and sz > height
+    on_bed = (fits or fits_rot) and not tall
+    # A part that fits the footprint but whose height nobody can check is
+    # not a part that fits. Answering True here skipped the height test
+    # rather than failing it, so a 900 mm column came back printable on a
+    # profile that declares no printable_height. A part with no height at
+    # all is still answerable: there is nothing to check.
+    unchecked_z = height is None and sz > 0
+    # A no is worth as much as a yes only if it says why. These read in the
+    # same voice as the unchecked-height reason above, and in the same voice
+    # as gcode.fits, so a part refused here and a plate refused there explain
+    # themselves the same way.
+    bad: list[str] = []
+    if not (fits or fits_rot):
+        over = []
+        if sx + margin_mm > bed["x_mm"]:
+            over.append(f"x overruns by "
+                        f"{round(sx + margin_mm - bed['x_mm'], 3)} mm")
+        if sy + margin_mm > bed["y_mm"]:
+            over.append(f"y overruns by "
+                        f"{round(sy + margin_mm - bed['y_mm'], 3)} mm")
+        bad.append(f"the {sx} x {sy} mm footprint plus a {margin_mm} mm "
+                   f"margin does not fit this {bed['x_mm']} x {bed['y_mm']} mm "
+                   f"bed square or turned 45 degrees ({', '.join(over)}; the "
+                   f"45 degree diagonal is {round(diag, 3)} mm)")
+    if tall:
+        bad.append(f"the part is {sz} mm tall, {round(sz - height, 3)} mm "
+                   f"more than this printer's {height} mm")
     return {
-        "ok": bool((fits or fits_rot) and not tall),
+        "ok": None if (on_bed and unchecked_z) else bool(on_bed),
+        "reason": (f"the footprint fits, but this machine profile declares no "
+                   f"printable height, so the part's {sz} mm in z is unchecked"
+                   if on_bed and unchecked_z else "; ".join(bad)),
         "fits_square": fits,
         "fits_rotated_45": fits_rot,
         "too_tall": bool(tall),
+        "height_checked": height is not None,
         "part_size_mm": mesh["size_mm"],
         "bed": bed,
         "margin_mm": margin_mm,
@@ -569,6 +612,26 @@ def extract_gcode(archive: str, output: str, plate: int = 1) -> dict[str, Any]:
     return {"entry": want[0], "output": str(dst),
             "bytes": dst.stat().st_size,
             "header": {k.strip(): v.strip() for k, v in list(meta.items())[:20]}}
+
+
+@mcp.tool()
+def make_printable(source: str, parts: list[str] | None = None) -> dict[str, Any]:
+    """Take a model to files this printer can run, in one call.
+
+    Renders each part, checks it against the bed, packs what fits onto as
+    few plates as it can, slices them, and proves every printed feature
+    lands on the bed. Reports what it arranged for you and what wants a
+    human. Never edits the model: a part that cannot print as designed is
+    reported, not altered."""
+    from . import pipeline
+    report = pipeline.run(source, WORKSPACE, parts)
+    # The report carries every fact; "summary" is the one screen of it that
+    # a reader acts on, and it travels with the report because the caller
+    # on the other side of this is usually a model reading JSON. Asking it
+    # to render the report itself to find out what to do next is asking it
+    # to fetch something, which is the one thing the summary exists to
+    # avoid.
+    return {**report, "summary": pipeline.summary(report)}
 
 
 # --------------------------------------------------------------------

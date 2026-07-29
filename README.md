@@ -44,6 +44,10 @@ The ordering is the point. `check` and `echo` skip geometry evaluation
 entirely, so they cost a second against models where a full render takes
 minutes. Pay for the expensive steps only once the cheap ones pass.
 
+Everything from the bed check down is also one call, `make_printable`, which
+renders, packs, slices and proves the result on the bed and reports what it
+did in a screen of text. See [the worked example](#the-worked-example).
+
 ## Install
 
 ```console
@@ -93,9 +97,19 @@ can look at what it built rather than inferring from numbers. `render` returns
 OpenSCAD's manifold report alongside a bounding box and volume, where
 `simple: yes` with a sensible volume count is the signal the mesh is printable.
 
-**slicer** exposes `setup_printer`, `machine_info`, `slicer_info`,
-`list_profiles`, `check_bed_fit`, `slice_model`, `slice_summary` and
-`extract_gcode`.
+**slicer** exposes `setup_printer`, `machine_info`, `make_printable`,
+`slicer_info`, `list_profiles`, `check_bed_fit`, `slice_model`,
+`slice_summary` and `extract_gcode`.
+
+`make_printable` is the whole chain in one call. Give it a `.scad` and the
+parts you want out of it, and it renders each one, measures it, packs what
+fits onto as few plates as it can, slices them, and then reads the finished
+G-code back to prove every extruding move lands on the bed. It never edits
+the model: a part that cannot print as designed is reported, not quietly
+shrunk or split. The one thing it changes is which plate a part lands on, and
+turning a part ninety degrees when it will not fit square, which it names in
+the report. It answers with every fact it established and, in `summary`, the
+one screen of text those facts add up to, ending in what to do next.
 
 Call `setup_printer()` once, with no arguments. It reads what your slicer is
 already configured with, resolves that to a machine, process and filament
@@ -221,16 +235,58 @@ everywhere else. Nothing downstream of CAD would have caught that. The shapes
 that shipped are smooth convex curves whose radius of curvature stays inside
 the ring's everywhere.
 
-```console
-make verify     # rolling interference and layout, all 14 parts
-make render PART=ring
-make smoke      # both servers, end to end
+Taking the whole set from source to plates is two calls, and the first one is
+only needed once:
+
+```python
+setup_printer()
+make_printable("spirograph.scad",
+               ["ring", "outer_ring", 24, 30, 32, 36, 40, 45, 52, 56, 63, 72,
+                80, "ellipse", "egg", "trefoil"])
 ```
+
+On an Ender-3 V3 SE with OrcaSlicer 2.4.2 and generic PLA, that is sixteen
+renders, five plates, five slices and five G-code files read back and checked
+against the bed, in about half a minute:
+
+```text
+ok      16 parts on 5 plates, every plate proven on the bed
+
+  machine ...... Creality Ender-3 V3 SE 0.4 nozzle, 220 x 220 mm bed, PLA
+  parts ........ 16 of 16 fit this bed
+  plates ....... 16 parts packed onto 5
+  sliced ....... 5 of 5, every extruding move on the bed
+  ready ........ ~/cad/plates/spirograph, 13h09m, 63.17 m PLA
+
+  worth a look:
+    plate_2 sits 2.2 mm from the bed edge, consider a brim
+
+  next: print the plates in ~/cad/plates/spirograph. Nothing above stops the
+        print — the notes are advisories — so read them and go.
+```
+
+Every number there is from that run. The brim note is an advisory and not a
+defect: plate 2 is on the bed with 2.2 mm to spare, which is close enough to
+the edge that a warped first layer would show. Anything the run could not
+prove says so in its own words — `ok` for what came out, `FAILED` for
+something attempted that did not, `UNKNOWN` for anything it could not tell —
+and the last line is always the call to make next.
+
+```console
+make verify              # rolling interference and layout, all 14 parts
+make render PART=ring    # one part to an .stl, no printer set up needed
+make smoke               # both servers, end to end
+```
+
+`make render` is the one step of the old walkthrough worth keeping by hand:
+it wants nothing but OpenSCAD, so it is the quickest way to look at a single
+part while you are still changing the model. Everything after it is
+`make_printable`.
 
 ## Testing status
 
 `make smoke` drives both servers over real MCP stdio sessions and asserts on
-thirty-seven behaviours: tool surface, defines reaching the script, a
+forty-five behaviours: tool surface, defines reaching the script, a
 deliberate syntax error being caught, measured geometry matching known
 dimensions, an image coming back from preview, profile classification,
 argument ordering, archive parsing, G-code extraction, bed fit passing and
@@ -243,6 +299,12 @@ printer, quality and filament it chose and store a triple from one install,
 and `check_bed_fit` and `slice_model` then have to work with no profile
 arguments at all. Editing a profile afterwards has to make both of them refuse
 and write nothing.
+
+`make_printable` is driven the same way, over the same session: a two-part
+`.scad` has to come back as at least one plate, with every plate proven on the
+bed by reading its G-code rather than by assumption, and a report of thirty
+lines or fewer that names the next step. That is the only automated end-to-end
+check of the one-call path.
 
 The OpenSCAD half runs against a real OpenSCAD and skips if none is installed.
 The slicer half runs against a mock binary that emits an Orca-shaped help text

@@ -250,6 +250,42 @@ def staleness(rec: dict[str, Any]) -> str | None:
     return None
 
 
+def bed(rec: dict[str, Any] | None,
+        machine_profile: str | Path | None = None) -> dict[str, Any]:
+    """The printable area to measure a part against.
+
+    Every tool that compares something to the bed needs the same answer,
+    and it is not simply "what the record cached" nor simply "what the
+    profile says". The fingerprint covers the machine profile but not the
+    parents it inherits printable_area from, so the cache can be right
+    about the file and wrong about the bed — the live profile wins. But
+    bed_of() reports z_mm None when no ancestor declares printable_height,
+    and taking that answer whole discards a height the record read when one
+    did. Losing the height is not a harmless gap: every consumer skips the
+    z bound when it has no number, so an absent height turns a check off
+    rather than failing it.
+
+    So the two are merged field by field, live over cached. Both are
+    optional: pass rec None to read a profile on its own terms, which is
+    what a caller naming some other printer's profile wants, since the
+    stored record describes a different machine. A field neither source
+    knows is absent from the result rather than present and None, so
+    bed.get("z_mm") is the one question a caller has to ask.
+
+    Returns {} when nothing anywhere declares a printable area.
+    """
+    profile = machine_profile or ((rec or {}).get("profiles") or {}).get("machine")
+    live: dict[str, Any] = {}
+    if profile:
+        try:
+            live = _profiles.bed_of(profile)
+        except Exception:
+            live = {}
+    out = dict(((rec or {}).get("derived") or {}).get("bed") or {})
+    out.update({k: v for k, v in live.items() if v is not None})
+    return {k: v for k, v in out.items() if v is not None}
+
+
 def _rank(hits: list[tuple[str, Path]],
           needle: str) -> list[tuple[str, Path]]:
     """An exact name always wins outright, so "Creality K1" does not drag in
@@ -281,29 +317,41 @@ def _match(kind: str, needle: str) -> list[tuple[str, Path]]:
     return _rank(hits, needle)
 
 
+def _as_install(root: Path) -> dict[str, Any]:
+    """The install dict profiles_in() expects, for a root already known to
+    be one (picked from profile_roots() or handed back by install_of())."""
+    return {"root": str(root), "name": Path(root).name}
+
+
 def _match_in(root: Path, kind: str, needle: str) -> list[tuple[str, Path]]:
     """The same question asked of one install's own files.
 
     _match() keeps one path per name across every root, so the copies it drops
     are invisible to it - and when two Orca forks ship the same process and
     filament names, those dropped copies are exactly the ones that complete
-    the other install's triple."""
+    the other install's triple.
+
+    profiles_in() lists every file, including two that share a name within
+    this same install - a vendor install can ship one profile twice, under
+    two filenames. That is one hit, not two: deduping belongs here, where
+    resolution happens, not in profiles_in(), which is a listing API and
+    would otherwise be hiding a file that genuinely exists on disk."""
     seen: set[str] = set()
     hits: list[tuple[str, Path]] = []
-    for rec in _profiles.root_profiles(root):
-        if rec["kind"] != kind:
-            continue
+    for rec in _profiles.profiles_in(_as_install(root), kind, needle):
         name = str(rec["name"])
         if name in seen:
             continue
-        if needle.lower() in name.lower():
-            seen.add(name)
-            hits.append((name, Path(rec["path"])))
+        seen.add(name)
+        hits.append((name, Path(rec["path"])))
     return _rank(hits, needle)
 
 
 def _root_of(path: str | Path) -> Path | None:
-    return _profiles.root_of(path)
+    """The install a profile belongs to, as the Path resolve() compares
+    against - install_of()'s dict form, unwrapped."""
+    install = _profiles.install_of(path)
+    return Path(install["root"]) if install else None
 
 
 def _under(root: Path | None,
@@ -333,8 +381,8 @@ def _named(kind: str, name: str, root: Path) -> Path | None:
     under the identical name. That is fine for picking a printer, but it
     means the other vendor's copy - the one that might actually have a
     matching process and filament - is otherwise invisible."""
-    for rec in _profiles.root_profiles(root):
-        if rec["kind"] == kind and str(rec["name"]).lower() == name.lower():
+    for rec in _profiles.profiles_in(_as_install(root), kind):
+        if rec["name"].lower() == name.lower():
             return Path(rec["path"])
     return None
 

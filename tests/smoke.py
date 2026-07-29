@@ -29,6 +29,7 @@ MOCK = ROOT / "tests" / "mock"
 FAILURES: list[str] = []
 
 sys.path.insert(0, str(ROOT / "src"))
+from cadloop import pipeline  # noqa: E402
 from cadloop.openscad_server import _binary as _openscad_binary  # noqa: E402
 
 # a 40 x 40 x 30 tetrahedron, so bed-fit has something real to measure
@@ -342,6 +343,60 @@ async def test_slicer(ws: Path) -> None:
                   got.get("command") is not None
                   and str(prof_dir) in " ".join(got["command"]),
                   str(got.get("command", []))[:80])
+
+            # ---------------------------------------------------------
+            # A4, A5 and A8: one call from a .scad to plates, every plate
+            # proven against the bed by reading its own G-code back, and a
+            # report that fits a screen and says what to do next. This is
+            # the only automated end-to-end coverage of the three, and it
+            # goes through the same MCP session a model would use.
+            #
+            # It needs a real OpenSCAD, because rendering is the half of
+            # the pipeline no mock stands in for here.
+            # ---------------------------------------------------------
+            try:
+                _openscad_binary()
+            except RuntimeError:
+                print("  skip  no openscad, make_printable not exercised")
+            else:
+                (ws / "pair.scad").write_text(
+                    'part = "small";\n'
+                    'if (part == "small") cube([20, 20, 10]);\n'
+                    'else cube([35, 25, 8]);\n')
+                got = payload(await s.call_tool(
+                    "make_printable", {"source": "pair.scad",
+                                       "parts": ["small", "large"]}))
+                check("make_printable takes a model to plates in one call",
+                      got.get("ok") is True, str(got.get("reason"))[:120])
+                parts, plates = got.get("parts") or [], got.get("plates") or []
+                check("both parts rendered and fit the bed",
+                      [p["name"] for p in parts] == ["small", "large"]
+                      and all(p["rendered"] and p["fits"] for p in parts),
+                      str([(p["name"], p["fits"]) for p in parts]))
+                check("it produced at least one plate", len(plates) >= 1,
+                      f"{len(plates)} plate(s)")
+                # A5 is proven, not assumed: on_bed comes from reading the
+                # extruding moves out of the G-code the slicer just wrote.
+                check("every plate is proven on the bed",
+                      bool(plates) and all(p["on_bed"] is True for p in plates),
+                      str([(p["name"], p["on_bed"]) for p in plates]))
+                check("the plates are really on disk",
+                      bool(plates) and all((ws / p["gcode"]).stat().st_size
+                                           for p in plates),
+                      str([p["gcode"] for p in plates]))
+                # A8: the screen of text comes back with the report, over
+                # the wire, so a model reading the JSON has it in hand.
+                report = got.get("summary") or ""
+                lines = report.splitlines()
+                check("the report comes back rendered, not just as facts",
+                      report == pipeline.summary(got),
+                      lines[0][:60] if lines else "no summary")
+                check("the report fits one screen", 0 < len(lines) <= 30,
+                      f"{len(lines)} lines")
+                check("the report says what to do next without fetching more",
+                      any(l.strip().startswith("next:") for l in lines)
+                      and got["output"] in report,
+                      lines[-1].strip()[:60] if lines else "")
 
             # A3: a setup that no longer matches reality is refused, not
             # warned about, and refused before anything is written.
