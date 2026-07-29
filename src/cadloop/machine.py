@@ -293,9 +293,21 @@ def _match_in(root: Path, kind: str, needle: str) -> list[tuple[str, Path]]:
     _match() keeps one path per name across every root, so the copies it drops
     are invisible to it - and when two Orca forks ship the same process and
     filament names, those dropped copies are exactly the ones that complete
-    the other install's triple."""
-    hits = [(rec["name"], Path(rec["path"]))
-            for rec in _profiles.profiles_in(_as_install(root), kind, needle)]
+    the other install's triple.
+
+    profiles_in() lists every file, including two that share a name within
+    this same install - a vendor install can ship one profile twice, under
+    two filenames. That is one hit, not two: deduping belongs here, where
+    resolution happens, not in profiles_in(), which is a listing API and
+    would otherwise be hiding a file that genuinely exists on disk."""
+    seen: set[str] = set()
+    hits: list[tuple[str, Path]] = []
+    for rec in _profiles.profiles_in(_as_install(root), kind, needle):
+        name = str(rec["name"])
+        if name in seen:
+            continue
+        seen.add(name)
+        hits.append((name, Path(rec["path"])))
     return _rank(hits, needle)
 
 

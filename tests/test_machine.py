@@ -342,6 +342,26 @@ def test_resolve_uses_the_process_it_is_given(tree, roots):
     assert "0.20mm Standard" in out["profiles"]["process"]
 
 
+def test_resolve_dedupes_a_name_shipped_twice_in_one_install(tree, roots):
+    """A vendor install can ship one profile name under two files - the
+    same preset saved twice, or one kept as a numbered backup. Two files in
+    one root sharing a name has to count as one hit, not two: matching by a
+    substring of a demanded name must not turn an ordinary duplicate that
+    was always there into a manufactured conflict."""
+    root = tree / "orca"
+    write(root, "machine", "Printer X")
+    write(root, "process", "0.20mm Standard @Printer X")
+    for fname in ("generic_pla_a", "generic_pla_b"):
+        (root / f"{fname}.json").write_text(json.dumps(
+            {"type": "filament", "name": "Generic PLA @Printer X"}))
+    roots(root)
+    out = machine.resolve(printer="Printer X", filament="Generic",
+                          explicit=["filament"])
+    assert out["ok"] is True, out["reason"]
+    assert out["profiles"]["filament"] in (
+        str(root / "generic_pla_a.json"), str(root / "generic_pla_b.json"))
+
+
 def test_a_demanded_process_in_another_install_is_refused_not_replaced(
         tree, roots):
     """A user preset selected in the GUI lives in the config directory while

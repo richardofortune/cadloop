@@ -155,12 +155,27 @@ def test_installs_are_the_most_specific_roots(tmp_path, monkeypatch):
     apps, orca, crea = _two_roots(tmp_path, monkeypatch, nest=True)
     found = {i["root"] for i in profiles.installs()}
     assert str(orca) in found and str(crea) in found
+    # A root that only holds two vendors' installs because it wraps them is
+    # not an install in its own right: merging both under it is the exact
+    # Critical shape the previous landing was fixed for.
+    assert str(apps) not in found
 
 
 def test_installs_are_ordered_most_specific_first(tmp_path, monkeypatch):
-    apps, orca, crea = _two_roots(tmp_path, monkeypatch, nest=True)
+    """A wrapping root is dropped entirely (previous test), but among the
+    installs that remain - because neither contains the other - the deeper
+    one still sorts first."""
+    base = tmp_path.resolve()
+    shallow, deep = base / "orca", base / "crea" / "nested"
+    for root in (shallow, deep):
+        root.mkdir(parents=True)
+        (root / "Printer X.json").write_text(
+            json.dumps({"type": "machine", "name": "Printer X"}))
+    monkeypatch.setenv("SLICER_PROFILE_DIRS",
+                       os.pathsep.join(str(d) for d in (shallow, deep)))
+    profiles.reset_cache()
     roots = [i["root"] for i in profiles.installs()]
-    assert roots.index(str(orca)) < roots.index(str(apps))
+    assert roots.index(str(deep)) < roots.index(str(shallow))
 
 
 def test_install_of_answers_the_deepest_install_holding_a_path(
@@ -192,3 +207,16 @@ def test_profiles_in_is_json_serialisable(tmp_path, monkeypatch):
     (orca / "P.json").write_text(json.dumps({"type": "process", "name": "P"}))
     json.loads(json.dumps(
         profiles.profiles_in({"root": str(orca), "name": "orca"}, "process")))
+
+
+def test_profiles_in_is_sorted_by_name(tmp_path, monkeypatch):
+    """Filenames deliberately disagree with the `name` field's order, so a
+    result that merely preserved root_profiles()'s path order would still
+    come out wrong here."""
+    apps, orca, crea = _two_roots(tmp_path, monkeypatch)
+    for filename, name in (("a_file", "Zeta"), ("b_file", "Mu"),
+                           ("c_file", "Alpha")):
+        (orca / f"{filename}.json").write_text(
+            json.dumps({"type": "process", "name": name}))
+    got = profiles.profiles_in({"root": str(orca), "name": "orca"}, "process")
+    assert [g["name"] for g in got] == ["Alpha", "Mu", "Zeta"]
