@@ -261,6 +261,44 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def installs() -> list[dict[str, Any]]:
+    """The profile trees on this machine, most specific first.
+
+    A root that contains another root is not an install in its own right for
+    anything the deeper one holds: pointing SLICER_PROFILE_DIRS at
+    /Applications must not make two vendors look like one place."""
+    roots = sorted((str(r) for r in profile_roots()), key=len, reverse=True)
+    return [{"root": r, "name": Path(r).name} for r in roots]
+
+
+def install_of(path: str | Path) -> dict[str, Any] | None:
+    """The install holding this profile, or None if none does."""
+    root = root_of(Path(path))
+    if root is None:
+        return None
+    return {"root": str(root), "name": Path(root).name}
+
+
+def profiles_in(install: dict[str, Any], kind: str,
+                needle: str | None = None) -> list[dict[str, Any]]:
+    """Profiles of one kind belonging to one install, by name.
+
+    Reads the install's own files rather than the flattened name index,
+    which keeps only one path per name and so hides a second vendor's copy.
+
+    root_profiles() already classifies each file, so this filters that list
+    rather than re-classifying: root_profiles()'s items are records, not
+    the paths classify() expects."""
+    out = []
+    for rec in root_profiles(Path(install["root"])):
+        if rec["kind"] != kind:
+            continue
+        if needle and needle.lower() not in rec["name"].lower():
+            continue
+        out.append({"name": rec["name"], "path": rec["path"], "kind": kind})
+    return sorted(out, key=lambda r: r["name"])
+
+
 def machine_facts(machine: str | Path, process: str | Path,
                   filament: str | Path) -> dict[str, Any]:
     """The handful of facts the rest of the system needs, read once.

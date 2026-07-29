@@ -149,3 +149,46 @@ def test_machine_facts_is_json_serialisable():
                                    FIXTURES / "proc.json",
                                    FIXTURES / "fila.json")
     json.loads(json.dumps(facts))
+
+
+def test_installs_are_the_most_specific_roots(tmp_path, monkeypatch):
+    apps, orca, crea = _two_roots(tmp_path, monkeypatch, nest=True)
+    found = {i["root"] for i in profiles.installs()}
+    assert str(orca) in found and str(crea) in found
+
+
+def test_installs_are_ordered_most_specific_first(tmp_path, monkeypatch):
+    apps, orca, crea = _two_roots(tmp_path, monkeypatch, nest=True)
+    roots = [i["root"] for i in profiles.installs()]
+    assert roots.index(str(orca)) < roots.index(str(apps))
+
+
+def test_install_of_answers_the_deepest_install_holding_a_path(
+        tmp_path, monkeypatch):
+    apps, orca, crea = _two_roots(tmp_path, monkeypatch, nest=True)
+    assert profiles.install_of(orca / "Printer X.json")["root"] == str(orca)
+
+
+def test_install_of_returns_none_for_a_path_no_install_holds(
+        tmp_path, monkeypatch):
+    _two_roots(tmp_path, monkeypatch)
+    stray = tmp_path / "elsewhere" / "M.json"
+    stray.parent.mkdir()
+    stray.write_text('{"type": "machine", "name": "M"}')
+    assert profiles.install_of(stray) is None
+
+
+def test_profiles_in_lists_one_install_only(tmp_path, monkeypatch):
+    apps, orca, crea = _two_roots(tmp_path, monkeypatch)
+    for root in (orca, crea):
+        (root / "Shared.json").write_text(
+            json.dumps({"type": "process", "name": "Shared"}))
+    got = profiles.profiles_in({"root": str(orca), "name": "orca"}, "process")
+    assert [g["path"] for g in got] == [str(orca / "Shared.json")]
+
+
+def test_profiles_in_is_json_serialisable(tmp_path, monkeypatch):
+    apps, orca, crea = _two_roots(tmp_path, monkeypatch)
+    (orca / "P.json").write_text(json.dumps({"type": "process", "name": "P"}))
+    json.loads(json.dumps(
+        profiles.profiles_in({"root": str(orca), "name": "orca"}, "process")))

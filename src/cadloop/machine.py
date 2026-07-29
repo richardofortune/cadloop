@@ -281,6 +281,12 @@ def _match(kind: str, needle: str) -> list[tuple[str, Path]]:
     return _rank(hits, needle)
 
 
+def _as_install(root: Path) -> dict[str, Any]:
+    """The install dict profiles_in() expects, for a root already known to
+    be one (picked from profile_roots() or handed back by install_of())."""
+    return {"root": str(root), "name": Path(root).name}
+
+
 def _match_in(root: Path, kind: str, needle: str) -> list[tuple[str, Path]]:
     """The same question asked of one install's own files.
 
@@ -288,22 +294,16 @@ def _match_in(root: Path, kind: str, needle: str) -> list[tuple[str, Path]]:
     are invisible to it - and when two Orca forks ship the same process and
     filament names, those dropped copies are exactly the ones that complete
     the other install's triple."""
-    seen: set[str] = set()
-    hits: list[tuple[str, Path]] = []
-    for rec in _profiles.root_profiles(root):
-        if rec["kind"] != kind:
-            continue
-        name = str(rec["name"])
-        if name in seen:
-            continue
-        if needle.lower() in name.lower():
-            seen.add(name)
-            hits.append((name, Path(rec["path"])))
+    hits = [(rec["name"], Path(rec["path"]))
+            for rec in _profiles.profiles_in(_as_install(root), kind, needle)]
     return _rank(hits, needle)
 
 
 def _root_of(path: str | Path) -> Path | None:
-    return _profiles.root_of(path)
+    """The install a profile belongs to, as the Path resolve() compares
+    against - install_of()'s dict form, unwrapped."""
+    install = _profiles.install_of(path)
+    return Path(install["root"]) if install else None
 
 
 def _under(root: Path | None,
@@ -333,8 +333,8 @@ def _named(kind: str, name: str, root: Path) -> Path | None:
     under the identical name. That is fine for picking a printer, but it
     means the other vendor's copy - the one that might actually have a
     matching process and filament - is otherwise invisible."""
-    for rec in _profiles.root_profiles(root):
-        if rec["kind"] == kind and str(rec["name"]).lower() == name.lower():
+    for rec in _profiles.profiles_in(_as_install(root), kind):
+        if rec["name"].lower() == name.lower():
             return Path(rec["path"])
     return None
 
