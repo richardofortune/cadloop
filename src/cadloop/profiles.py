@@ -261,32 +261,6 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
-def installs() -> list[dict[str, Any]]:
-    """The profile trees on this machine, most specific first.
-
-    A root that contains another root is not an install in its own right for
-    anything the deeper one holds: pointing SLICER_PROFILE_DIRS at
-    /Applications must not make two vendors look like one place, so any root
-    that is a strict ancestor of another configured root is dropped rather
-    than merely sorted after it."""
-    all_roots = [str(r) for r in profile_roots()]
-
-    def _wraps_another(a: str) -> bool:
-        for b in all_roots:
-            if a == b:
-                continue
-            try:
-                Path(b).relative_to(a)
-            except ValueError:
-                continue
-            return True
-        return False
-
-    roots = sorted((r for r in all_roots if not _wraps_another(r)),
-                   key=len, reverse=True)
-    return [{"root": r, "name": Path(r).name} for r in roots]
-
-
 def install_of(path: str | Path) -> dict[str, Any] | None:
     """The install holding this profile, or None if none does."""
     root = root_of(Path(path))

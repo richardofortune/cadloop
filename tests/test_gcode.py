@@ -88,6 +88,19 @@ def test_fits_is_unknown_without_a_bed(sample):
     assert "bed" in r["reason"]
 
 
+def test_fits_is_unknown_with_half_a_bed(sample):
+    """A bed with one dimension is not a bed to compare against.
+
+    The empty bed was covered; this shape was not, and it is the one that
+    reaches the comparison and raises KeyError on the axis that is missing.
+    A5 rests on this answering rather than crashing."""
+    for bed in ({"x_mm": 220.0}, {"y_mm": 220.0},
+                {"x_mm": 220.0, "z_mm": 250.0}):
+        r = gcode.fits(sample, bed)
+        assert r["ok"] is None, bed
+        assert "bed" in r["reason"], bed
+
+
 # Real OrcaSlicer output: the HEADER_BLOCK at the top uses colon syntax and
 # holds only the generator banner and a couple of fields, a decoy
 # "; ... width = ..." block sits below it using unrelated key names, and the
@@ -188,6 +201,24 @@ def test_extent_ignores_a_zero_length_extrusion(tmp_path):
     e = gcode.extent(p)
     assert e["moves"] == 1
     assert e["x"][1] == 10.0, "E0 extrudes nothing so it should not extend the extent"
+
+
+def test_a_coordinate_written_with_a_bare_leading_dot_is_read(tmp_path):
+    """"X.5" is a legal G-code number, and the reader used to skip it.
+
+    Skipping is worse than failing here: the coordinate does not go
+    missing, it silently keeps its previous value, so the move is recorded
+    at the wrong place and the extent A5 is proven from is quietly wrong.
+    The E reader always accepted a bare dot; the XYZ reader now agrees."""
+    p = tmp_path / "dot.gcode"
+    p.write_text("M83\n; printing object part id:0 copy 0\n"
+                 "G1 X100 Y100 Z.2 E.4\nG1 X.5 Y.5 Z.4 E.4\n")
+    e = gcode.extent(p)
+    assert e["moves"] == 2
+    # the low corner is the bare-dot move, not the 100 mm one carried over
+    assert e["x"] == [0.5, 100.0]
+    assert e["y"] == [0.5, 100.0]
+    assert e["z_max"] == 0.4
 
 
 # --------------------------------------------------------------------

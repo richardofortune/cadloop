@@ -273,9 +273,15 @@ something attempted that did not, `UNKNOWN` for anything it could not tell —
 and the last line is always the call to make next.
 
 ```console
-make verify     # rolling interference and layout, all 14 parts
-make smoke      # both servers, end to end
+make verify              # rolling interference and layout, all 14 parts
+make render PART=ring    # one part to an .stl, no printer set up needed
+make smoke               # both servers, end to end
 ```
+
+`make render` is the one step of the old walkthrough worth keeping by hand:
+it wants nothing but OpenSCAD, so it is the quickest way to look at a single
+part while you are still changing the model. Everything after it is
+`make_printable`.
 
 ## Testing status
 

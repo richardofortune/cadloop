@@ -78,20 +78,22 @@ def _place(plate: dict[str, Any], part: dict[str, Any], uw: float, ud: float,
     """Put a part on an existing shelf, or open a new one. False if neither."""
     for shelf in plate["shelves"]:
         if shelf["used"] + gap + part["w"] <= uw and part["d"] <= shelf["depth"]:
-            x = margin + shelf["used"] + (gap if shelf["parts"] else 0)
+            # A shelf exists only because something is on it — it is opened
+            # with its first part already placed — so anything joining one
+            # is always joining a neighbour, and always pays the gap.
+            x = margin + shelf["used"] + gap
             plate["parts"].append({"name": part["name"], "x": round(x, 3),
                                    "y": round(shelf["y"], 3),
                                    "rotated": part["rotated"],
                                    "w": part["w"], "d": part["d"]})
             shelf["used"] = x - margin + part["w"]
-            shelf["parts"] += 1
             return True
     top = plate["shelves"][-1] if plate["shelves"] else None
     y = (top["y"] + top["depth"] + gap) if top else margin
     if y - margin + part["d"] > ud:
         return False
     plate["shelves"].append({"y": y, "depth": part["d"],
-                             "used": part["w"], "parts": 1})
+                             "used": part["w"]})
     plate["parts"].append({"name": part["name"], "x": round(margin, 3),
                            "y": round(y, 3), "rotated": part["rotated"],
                            "w": part["w"], "d": part["d"]})

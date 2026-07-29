@@ -15,9 +15,14 @@ import re
 from pathlib import Path
 from typing import Any
 
-_XYZ = re.compile(r"([XYZ])(-?\d+\.?\d*)")
-# E values can start with a bare dot ("E.4"), unlike X/Y/Z in practice.
-_E_VALUE = re.compile(r"E(-?(?:\d+\.?\d*|\.\d+))")
+# A bare leading dot is a legal G-code number and slicers do emit one. Both
+# of these read it, and they have to agree: when _XYZ refused "X.5" the
+# token did not fail, it was simply skipped, and the *previous* X carried
+# forward as though the move had not happened — a wrong coordinate in the
+# extent A5 is proven from, rather than a refusal anyone could see.
+_NUMBER = r"-?(?:\d+\.?\d*|\.\d+)"
+_XYZ = re.compile(rf"([XYZ])({_NUMBER})")
+_E_VALUE = re.compile(rf"E({_NUMBER})")
 _HEADER_EQ = re.compile(r"^;\s*([a-z_][a-z0-9_ ]*?)\s*=\s*(.+?)\s*$", re.I)
 _HEADER_COLON = re.compile(r"^;\s*([a-z_][a-z0-9_ ]*?)\s*:\s*(.+?)\s*$", re.I)
 # Every Orca-family slicer writes this before the first object it prints.

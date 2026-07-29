@@ -112,6 +112,25 @@ def test_gap_forces_a_new_shelf_when_widths_sum_to_exactly_usable_width():
         "parts should need separate shelves once the gap between them is counted"
 
 
+def test_parts_sharing_a_shelf_are_separated_by_the_gap():
+    """Touching is not fitting.
+
+    Two parts flush against each other print as one fused object, and
+    test_placements_do_not_overlap cannot see it: a shared edge is not an
+    overlap under any of its four comparisons. The gap has to be paid where
+    the part is actually placed, not only in the check that decides whether
+    it fits — dropping it from the placement leaves that whole test green.
+    """
+    parts = [{"name": "a", "w": 60.0, "d": 40.0},
+             {"name": "b", "w": 60.0, "d": 40.0}]
+    r = packing.pack(parts, BED)
+    assert len(r["plates"]) == 1
+    a, b = sorted(r["plates"][0]["parts"], key=lambda p: p["x"])
+    assert a["y"] == b["y"], "fixture is only meaningful if they share a shelf"
+    assert b["x"] - (a["x"] + a["w"]) >= 3.0 - 1e-9, \
+        "the second part on a shelf must clear the first by the gap"
+
+
 def test_shelf_depth_check_is_load_bearing():
     # pack() sorts every part by depth descending before placing any of
     # them, so through the public API a shelf already on a plate can never
@@ -126,14 +145,14 @@ def test_shelf_depth_check_is_load_bearing():
 
     # A part deeper than an existing (shallow) shelf must not join it --
     # joining would let it overhang into whatever shelf comes next.
-    plate = {"parts": [], "shelves": [{"y": 8.0, "depth": 30.0, "used": 40.0, "parts": 1}]}
+    plate = {"parts": [], "shelves": [{"y": 8.0, "depth": 30.0, "used": 40.0}]}
     deep = {"name": "deep", "w": 20.0, "d": 80.0, "rotated": False}
     assert packing._place(plate, deep, uw, ud, gap, margin) is True
     assert len(plate["shelves"]) == 2, \
         "a part deeper than the existing shelf must open a new shelf, not join it"
 
     # A part shallower than an existing (deep) shelf may safely share it.
-    plate2 = {"parts": [], "shelves": [{"y": 8.0, "depth": 80.0, "used": 40.0, "parts": 1}]}
+    plate2 = {"parts": [], "shelves": [{"y": 8.0, "depth": 80.0, "used": 40.0}]}
     shallow = {"name": "shallow", "w": 20.0, "d": 30.0, "rotated": False}
     assert packing._place(plate2, shallow, uw, ud, gap, margin) is True
     assert len(plate2["shelves"]) == 1, \
@@ -149,6 +168,21 @@ def test_bed_with_no_dimensions_is_reported_not_raised():
     assert r["plates"] == []
     assert r["unplaceable"][0]["name"] == "a"
     assert "bed" in r["unplaceable"][0]["reason"]
+
+
+def test_half_a_bed_is_reported_not_raised():
+    """One dimension is not a bed either.
+
+    An empty bed was tested; a bed with x and no y was not, and that is the
+    shape a machine profile really produces when printable_area parses far
+    enough to give one axis. The guard has to ask for both, because either
+    one missing means _usable() reaches for a key that is not there."""
+    for bed in ({"x_mm": 220.0}, {"y_mm": 220.0},
+                {"x_mm": 220.0, "z_mm": 250.0}):
+        r = packing.pack([{"name": "a", "w": 40.0, "d": 40.0}], bed)
+        assert r["plates"] == [], bed
+        assert r["unplaceable"][0]["name"] == "a", bed
+        assert "bed" in r["unplaceable"][0]["reason"], bed
 
 
 def test_nothing_in_is_nothing_out():

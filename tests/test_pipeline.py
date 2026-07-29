@@ -593,6 +593,18 @@ def test_a_plate_off_the_bed_is_a_failure_not_a_note():
     assert "off the bed" in pipeline.summary(report)
 
 
+def flat(text):
+    """The summary as one line, for asserting on a phrase.
+
+    Every field in the summary is wrapped at 78 columns, so a phrase near a
+    line's end is split across two of them and a plain substring test
+    silently misses it. That is fatal for a *negative* assertion, which then
+    cannot fail: "every extruding move on the bed" wrapped after "move" is
+    how an unproven plate was able to claim it was proven with the test that
+    forbids it green. Flattening first is what makes those assertions bite."""
+    return " ".join(text.split())
+
+
 def nxt(report):
     """The summary's last block: what to do next, as one string.
 
@@ -601,7 +613,7 @@ def nxt(report):
     lines = pipeline.summary(report).splitlines()
     starts = [i for i, l in enumerate(lines) if l.strip().startswith("next:")]
     assert len(starts) == 1, "\n".join(lines)
-    return " ".join(" ".join(lines[starts[0]:]).split())
+    return flat(" ".join(lines[starts[0]:]))
 
 
 # The three answers have to look like three answers. A reader skimming the
@@ -700,10 +712,10 @@ def test_a_report_trimmed_to_its_bones_still_reads():
     text = pipeline.summary({"ok": True, "output": "/tmp/x",
                              "plates": [{"name": "plate_1", "on_bed": True}],
                              "totals": {"plates": 1}})
-    assert "produced no G-code" not in text
-    assert "not proven" not in text
-    assert "every extruding move on the bed" in text
-    assert "next: print the plates in /tmp/x" in text
+    assert "produced no G-code" not in flat(text)
+    assert "not proven" not in flat(text)
+    assert "every extruding move on the bed" in flat(text)
+    assert "next: print the plates in /tmp/x" in flat(text)
     assert len(text.splitlines()) <= 30
 
 
@@ -728,8 +740,8 @@ def test_a_plate_with_no_gcode_is_a_failure_not_an_unproven_plate(rig,
     exist."""
     monkeypatch.setenv("SLICER_NO_GCODE", "1")
     r = pipeline.run("m.scad", rig, ["30"])
-    text = pipeline.summary(r)
-    assert text.splitlines()[0].startswith("FAILED")
+    text = flat(pipeline.summary(r))
+    assert pipeline.summary(r).splitlines()[0].startswith("FAILED")
     assert "1 of 1" in text                  # it did slice
     assert "produced no G-code" in text      # and produced nothing
     assert "not proven on the bed" not in text
@@ -745,9 +757,9 @@ def test_an_unproven_plate_never_reads_as_a_proven_one(rig, monkeypatch):
     monkeypatch.setenv("SLICER_NO_MARKER", "1")
     text = pipeline.summary(pipeline.run("m.scad", rig, ["30"]))
     assert text.splitlines()[0].startswith("UNKNOWN")
-    assert "not proven on the bed" in text
-    assert "prints off the bed" not in text
-    assert "every extruding move on the bed" not in text
+    assert "not proven on the bed" in flat(text)
+    assert "prints off the bed" not in flat(text)
+    assert "every extruding move on the bed" not in flat(text)
     assert "ready" not in text
 
 
@@ -797,7 +809,7 @@ def test_a_turned_part_is_named_in_the_summary(rig, monkeypatch):
     assert r["ok"] is True, r["reason"]
     text = pipeline.summary(r)
     assert "arranged for you:" in text
-    assert "oblong turned 90 degrees, it does not fit square" in text
+    assert "oblong turned 90 degrees, it does not fit square" in flat(text)
     assert len(text.splitlines()) <= 30
 
 
@@ -814,9 +826,9 @@ def test_a_summary_of_a_real_run_says_where_the_plates_are(rig):
     r = pipeline.run("m.scad", rig, ["30", "40"])
     text = pipeline.summary(r)
     assert text.splitlines()[0].startswith("ok")
-    assert "Fake 0.4 nozzle" in text
-    assert "220 x 220" in text
+    assert "Fake 0.4 nozzle" in flat(text)
+    assert "220 x 220" in flat(text)
     assert r["output"] in text
-    assert "2h04m" in text and "9.94 m PLA" in text
-    assert "every extruding move on the bed" in text
+    assert "2h04m" in flat(text) and "9.94 m PLA" in flat(text)
+    assert "every extruding move on the bed" in flat(text)
     assert len(text.splitlines()) <= 30
