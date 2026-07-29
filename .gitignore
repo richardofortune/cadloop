@@ -17,3 +17,6 @@ dist/
 # generated. The README hero is the one output that has to be in the repo.
 docs/walkthrough/out/*
 !docs/walkthrough/out/cadloop-hero.gif
+
+# superpowers worktrees
+/.worktrees/
