@@ -295,7 +295,7 @@ def test_a_part_that_only_fits_turned_is_reported_as_turned(rig, monkeypatch):
     # 120 x 280 mm on a 300 x 150 bed: too deep square, fine on its side.
     # A square bed can never need a turn, so this one is not square, and the
     # fake OpenSCAD only makes squares, so widen the mesh after it renders.
-    monkeypatch.setattr(pipeline, "_bed", lambda rec: {
+    monkeypatch.setattr(machine, "bed", lambda *a, **k: {
         "x_mm": 300.0, "y_mm": 150.0, "z_mm": 250.0, "origin": [0.0, 0.0]})
     real_render = pipeline._render
 
@@ -326,7 +326,7 @@ def test_unreadable_gcode_is_unknown_not_a_failure(rig, monkeypatch):
     monkeypatch.setattr(pipeline._gcode, "fits", blank)
     r = pipeline.run("m.scad", rig, ["30"])
     assert r["ok"] is None
-    assert "could not be read" in r["reason"]
+    assert "could not be proven on the bed" in r["reason"]
     assert r["plates"][0]["on_bed"] is None
 
 
@@ -341,7 +341,7 @@ def test_a_slicer_refusal_stops_the_run(rig, monkeypatch):
 
 
 def test_a_bed_with_no_geometry_refuses_before_rendering(rig, monkeypatch):
-    monkeypatch.setattr(pipeline, "_bed", lambda rec: {})
+    monkeypatch.setattr(machine, "bed", lambda *a, **k: {})
     r = pipeline.run("m.scad", rig, ["30"])
     assert r["ok"] is None
     assert "printable area" in r["reason"]
@@ -403,7 +403,7 @@ def test_a_height_the_profile_lost_is_still_checked_from_the_record(
     # reports z_mm None. The record still remembers 250. Taking the live bed
     # whole would silently turn the Z bound off; merging keeps it on.
     _reprint_record(tmp_path, mutate_profile=lambda c: c.pop("printable_height"))
-    assert pipeline._bed(machine.load())["z_mm"] == 250.0
+    assert machine.bed(machine.load())["z_mm"] == 250.0
     monkeypatch.setenv("SLICER_Z", "900")
     r = pipeline.run("m.scad", rig, ["30"])
     assert r["ok"] is False
@@ -419,7 +419,7 @@ def test_a_plate_whose_height_cannot_be_checked_is_unknown_not_proven(
     _reprint_record(tmp_path,
                     mutate_profile=lambda c: c.pop("printable_height"),
                     mutate_bed=lambda b: b.pop("z_mm"))
-    assert not pipeline._bed(machine.load()).get("z_mm")
+    assert not machine.bed(machine.load()).get("z_mm")
     monkeypatch.setenv("SLICER_Z", "900")
     r = pipeline.run("m.scad", rig, ["30"])
     assert r["ok"] is None
@@ -455,7 +455,7 @@ def test_gcode_with_no_object_marker_is_unknown_not_a_failure(rig, monkeypatch):
     assert plate["sliced"] is True and plate["gcode"] is not None
     assert plate["on_bed"] is None
     assert "no object marker" in plate["reason"]
-    assert "could not be read" in r["reason"]
+    assert "could not be proven on the bed" in r["reason"]
 
 
 # --------------------------------------------------------------------

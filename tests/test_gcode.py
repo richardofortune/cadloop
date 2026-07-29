@@ -188,3 +188,47 @@ def test_extent_ignores_a_zero_length_extrusion(tmp_path):
     e = gcode.extent(p)
     assert e["moves"] == 1
     assert e["x"][1] == 10.0, "E0 extrudes nothing so it should not extend the extent"
+
+
+# --------------------------------------------------------------------
+# a bed with no height cannot prove a file that climbs
+# --------------------------------------------------------------------
+
+def test_a_bed_with_no_height_cannot_prove_a_file_that_climbs(sample):
+    # Nothing is out of bounds in x or y, and z0.28 is inside no height at
+    # all. Answering True here would be skipping the z test, not passing it.
+    r = gcode.fits(sample, {"x_mm": 220.0, "y_mm": 220.0, "z_mm": None})
+    assert r["ok"] is None
+    assert "no printable height" in r["reason"]
+    assert "z is unchecked" in r["reason"]
+    # and the same when the key is absent rather than None
+    assert gcode.fits(sample, {"x_mm": 220.0, "y_mm": 220.0})["ok"] is None
+
+
+def test_a_file_that_never_leaves_the_plate_needs_no_height(tmp_path):
+    flat = tmp_path / "flat.gcode"
+    flat.write_text("M83\n; printing object part id:0 copy 0\n"
+                    "G1 X30 Y30 E.4\nG1 X60 Y60 E.4\n")
+    r = gcode.fits(flat, {"x_mm": 220.0, "y_mm": 220.0, "z_mm": None})
+    assert r["extent"]["z_max"] == 0.0
+    assert r["ok"] is True          # there is no height to check
+
+
+def test_a_definite_overrun_outranks_an_unknown_height(tmp_path):
+    off = tmp_path / "off.gcode"
+    off.write_text("M83\n; printing object part id:0 copy 0\n"
+                   "G1 X300 Y30 Z900 E.4\n")
+    r = gcode.fits(off, {"x_mm": 220.0, "y_mm": 220.0, "z_mm": None})
+    assert r["ok"] is False         # off the bed whatever its height
+    assert "x reaches 300.0 of 220.0" in r["reason"]
+
+
+def test_a_known_height_still_catches_a_tall_part(sample, tmp_path):
+    tall = tmp_path / "tall.gcode"
+    tall.write_text("M83\n; printing object part id:0 copy 0\n"
+                    "G1 X30 Y30 Z900 E.4\n")
+    r = gcode.fits(tall, {"x_mm": 220.0, "y_mm": 220.0, "z_mm": 250.0})
+    assert r["ok"] is False
+    assert "z reaches 900.0 of 250.0" in r["reason"]
+    assert gcode.fits(sample, {"x_mm": 220.0, "y_mm": 220.0,
+                               "z_mm": 250.0})["ok"] is True

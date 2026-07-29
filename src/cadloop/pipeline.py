@@ -36,7 +36,6 @@ from . import openscad_server as _openscad
 from . import packing as _packing
 from . import slicer_server as _slicer
 from .common import measure_stl, run as _sh, safe_path, scad_literal
-from .profiles import bed_of
 
 # The variable a multi-part .scad switches on. Every model in this repo
 # spells it "part", and the convention is worth more than a knob.
@@ -117,32 +116,6 @@ def _scad_value(entry: Any) -> Any:
 
 def _stem(name: str) -> str:
     return _UNSAFE.sub("_", name).strip("_") or "part"
-
-
-def _bed(rec: dict[str, Any]) -> dict[str, Any]:
-    """The bed to check against.
-
-    Read off the machine profile first and fall back to the record's cached
-    copy, which is what check_bed_fit does and for the same reason: the
-    fingerprint covers the machine profile but not the parents it inherits
-    printable_area from, so the cache can be right about the file and wrong
-    about the bed. Two tools in one package must not disagree about how big
-    the bed is.
-
-    The two are merged field by field rather than one replacing the other,
-    because bed_of() returns a bed with z_mm None when no ancestor declares
-    printable_height, and taking that bed whole would throw away a cached
-    height that was read when one did. Losing the height is not a harmless
-    gap: gcode.fits skips the Z bound entirely when it has no number, so a
-    silently absent height turns off a check rather than failing one.
-    """
-    try:
-        live = bed_of((rec.get("profiles") or {}).get("machine") or "")
-    except Exception:
-        live = {}
-    bed = dict(((rec.get("derived") or {}).get("bed") or {}))
-    bed.update({k: v for k, v in live.items() if v is not None})
-    return bed
 
 
 def _record_exists() -> bool:
@@ -268,7 +241,7 @@ def run(source: str, workspace: str | Path,
                        f"disk: {why}. Run setup_printer.")
 
     derived = rec.get("derived") or {}
-    bed = _bed(rec)
+    bed = _machine.bed(rec)
     machine_block = {"name": rec.get("name"), "bed": bed,
                      "filament": derived.get("filament_type")}
     if not bed.get("x_mm") or not bed.get("y_mm"):
@@ -402,10 +375,15 @@ def run(source: str, workspace: str | Path,
         report["ok"] = None
         report["reason"] = "no part reached a plate, so nothing was sliced"
     elif unproven:
+        # Deliberately does not say why. A plate lands here both when its
+        # G-code says nothing a reader can vouch for and when the G-code is
+        # perfectly legible but the bed has no height to check it against,
+        # and the top line guessing between them is how "could not be read"
+        # ended up describing a file of ninety thousand readable moves. The
+        # plate's own reason says which.
         report["ok"] = None
-        report["reason"] = (f"{_names(unproven)} sliced, but its G-code could "
-                            f"not be read well enough to prove it lands on "
-                            f"the bed")
+        report["reason"] = (f"{_names(unproven)} sliced, but could not be "
+                            f"proven on the bed")
     else:
         report["ok"], report["reason"] = True, ""
     return report
@@ -470,22 +448,14 @@ def _slice_plate(index: int, plate: dict[str, Any],
         entry["reason"] = fit["reason"]
         attention.append(f"{name} prints off the bed: {fit['reason']}")
     elif fit["ok"] is None:
+        # Unreadable G-code and a bed with no printable height both land
+        # here. Which one it was is gcode.fits's business to say, not this
+        # module's to work out — a caller that has to reconstruct why a
+        # check could not conclude is a caller compensating for a fact kept
+        # somewhere else.
         entry["reason"] = fit["reason"]
         attention.append(f"{name} could not be proven on the bed: "
                          f"{fit['reason']}")
-    elif not bed.get("z_mm"):
-        # X and Y are proven; Z is not, because gcode.fits has no height to
-        # compare against and quietly skips that bound when it has none. A5
-        # promises proof, and two axes out of three is not it, so this plate
-        # is unknown rather than passed. The G-code is still on disk and
-        # still probably fine — that is exactly what "unknown" means.
-        entry["on_bed"] = None
-        entry["reason"] = (f"x and y are inside the bed, but this printer's "
-                           f"profile declares no printable height, so the "
-                           f"{fit['extent']['z_max']} mm this plate reaches "
-                           f"in z is unchecked")
-        attention.append(f"{name} could not be proven on the bed: "
-                         f"{entry['reason']}")
     else:
         extent = fit["extent"]
         gap = min(extent["x"][0], bed["x_mm"] - extent["x"][1],

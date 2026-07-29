@@ -525,3 +525,92 @@ def test_prove_reports_a_slicer_that_answers_help_but_cannot_slice(tmp_path):
     out = slicer_server._prove(str(fake), profs)
     assert out["ok"] is False
     assert "205" in out["reason"] or "Relative extruder" in out["reason"]
+
+
+# --------------------------------------------------------------------
+# one answer to "how big is this bed"
+# --------------------------------------------------------------------
+
+def _bed_profile(tmp_path, **extra):
+    p = tmp_path / "bed.json"
+    p.write_text(json.dumps({
+        "type": "machine", "name": "B",
+        "printable_area": ["0x0", "220x0", "220x220", "0x220"], **extra}))
+    return str(p)
+
+
+def _bed_record(profile, bed):
+    return {"schema": machine.SCHEMA, "name": "B",
+            "profiles": {"machine": profile}, "derived": {"bed": bed}}
+
+
+def test_bed_prefers_the_live_profile_over_the_cached_copy(tree):
+    # The profile is the truth; the record is a cache the fingerprint does
+    # not fully cover, because it does not hash the parents a bed is
+    # inherited from.
+    prof = _bed_profile(tree, printable_height="250")
+    b = machine.bed(_bed_record(prof, {"x_mm": 100.0, "y_mm": 100.0, "z_mm": 90.0}))
+    assert b["x_mm"] == 220.0 and b["y_mm"] == 220.0 and b["z_mm"] == 250.0
+
+
+def test_bed_keeps_a_height_the_profile_no_longer_declares(tree):
+    # bed_of reports z_mm None here. Taking that answer whole would drop the
+    # 250 the record read when an ancestor still declared it, and a bed with
+    # no height silently switches the z check off in every consumer.
+    prof = _bed_profile(tree)
+    b = machine.bed(_bed_record(prof, {"x_mm": 220.0, "y_mm": 220.0, "z_mm": 250.0}))
+    assert b["z_mm"] == 250.0
+
+
+def test_bed_omits_a_height_nobody_knows_rather_than_storing_none(tree):
+    # machine_facts stores bed_of()'s answer verbatim, so a record written
+    # when no ancestor declared printable_height really does carry
+    # "z_mm": null. That null must not survive into the merged bed as a
+    # key that reads as present.
+    prof = _bed_profile(tree)
+    b = machine.bed(_bed_record(prof, {"x_mm": 220.0, "y_mm": 220.0,
+                                       "z_mm": None}))
+    assert "z_mm" not in b          # absent, not present and None
+    assert not b.get("z_mm")
+    b = machine.bed(_bed_record(prof, {"x_mm": 220.0, "y_mm": 220.0}))
+    assert "z_mm" not in b
+
+
+def test_a_named_profile_wins_over_the_records_own(tree):
+    # Both given: the profile named is the one read. The record is only
+    # there to top up fields the live profile cannot supply.
+    mine = _bed_profile(tree, printable_height="250")
+    theirs = tree / "theirs.json"
+    theirs.write_text(json.dumps({
+        "type": "machine", "name": "theirs",
+        "printable_area": ["0x0", "300x0", "300x300", "0x300"],
+        "printable_height": "400"}))
+    b = machine.bed(_bed_record(mine, {"x_mm": 220.0, "y_mm": 220.0,
+                                       "z_mm": 250.0}),
+                    machine_profile=str(theirs))
+    assert b["x_mm"] == 300.0 and b["z_mm"] == 400.0
+
+
+def test_bed_falls_back_to_the_record_when_the_profile_is_gone(tree):
+    b = machine.bed(_bed_record(str(tree / "not-there.json"),
+                            {"x_mm": 180.0, "y_mm": 180.0, "z_mm": 200.0}))
+    assert b == {"x_mm": 180.0, "y_mm": 180.0, "z_mm": 200.0}
+
+
+def test_bed_reads_a_named_profile_without_a_bed_record(tree):
+    prof = _bed_profile(tree, printable_height="250")
+    b = machine.bed(None, machine_profile=prof)
+    assert b["x_mm"] == 220.0 and b["z_mm"] == 250.0
+
+
+def test_a_named_profile_is_not_topped_up_from_another_printers_bed_record(tree):
+    # Asking about someone else's profile must not borrow this machine's
+    # cached height: they are different printers.
+    prof = _bed_profile(tree)
+    assert "z_mm" not in machine.bed(None, machine_profile=prof)
+
+
+def test_bed_is_empty_when_nothing_declares_one(tree):
+    assert machine.bed(None) == {}
+    assert machine.bed({}) == {}
+    assert machine.bed(_bed_record(str(tree / "gone.json"), {})) == {}

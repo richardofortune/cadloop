@@ -250,6 +250,42 @@ def staleness(rec: dict[str, Any]) -> str | None:
     return None
 
 
+def bed(rec: dict[str, Any] | None,
+        machine_profile: str | Path | None = None) -> dict[str, Any]:
+    """The printable area to measure a part against.
+
+    Every tool that compares something to the bed needs the same answer,
+    and it is not simply "what the record cached" nor simply "what the
+    profile says". The fingerprint covers the machine profile but not the
+    parents it inherits printable_area from, so the cache can be right
+    about the file and wrong about the bed — the live profile wins. But
+    bed_of() reports z_mm None when no ancestor declares printable_height,
+    and taking that answer whole discards a height the record read when one
+    did. Losing the height is not a harmless gap: every consumer skips the
+    z bound when it has no number, so an absent height turns a check off
+    rather than failing it.
+
+    So the two are merged field by field, live over cached. Both are
+    optional: pass rec None to read a profile on its own terms, which is
+    what a caller naming some other printer's profile wants, since the
+    stored record describes a different machine. A field neither source
+    knows is absent from the result rather than present and None, so
+    bed.get("z_mm") is the one question a caller has to ask.
+
+    Returns {} when nothing anywhere declares a printable area.
+    """
+    profile = machine_profile or ((rec or {}).get("profiles") or {}).get("machine")
+    live: dict[str, Any] = {}
+    if profile:
+        try:
+            live = _profiles.bed_of(profile)
+        except Exception:
+            live = {}
+    out = dict(((rec or {}).get("derived") or {}).get("bed") or {})
+    out.update({k: v for k, v in live.items() if v is not None})
+    return {k: v for k, v in out.items() if v is not None}
+
+
 def _rank(hits: list[tuple[str, Path]],
           needle: str) -> list[tuple[str, Path]]:
     """An exact name always wins outright, so "Creality K1" does not drag in

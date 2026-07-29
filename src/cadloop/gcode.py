@@ -135,7 +135,19 @@ def extent(path: str | Path) -> dict[str, Any]:
 
 def fits(path: str | Path, bed: dict[str, Any],
          margin_mm: float = 0.0) -> dict[str, Any]:
-    """Whether every printed feature lands inside the machine's bed."""
+    """Whether every printed feature lands inside the machine's bed.
+
+    ok is None when the question cannot be settled: no extent to measure,
+    no bed to measure against, or a bed with no printable height under a
+    file that climbs. That last one used to answer True, because a height
+    of None simply skipped the z comparison — an absent number turning a
+    check off rather than failing it, and the caller told every feature was
+    inside a bed whose height nobody knew. A file that never leaves z0 is
+    still provable, since there is no height to check.
+
+    A definite failure outranks an unknown: a plate that overruns x is off
+    the bed whatever its height, so that answers False rather than None.
+    """
     e = extent(path)
     if not e["ok"]:
         return {"ok": None, "reason": e.get("reason", "nothing to measure"),
@@ -154,4 +166,12 @@ def fits(path: str | Path, bed: dict[str, Any],
         bad.append(f"y reaches {e['y'][1]} of {bed['y_mm']}")
     if bed.get("z_mm") and e["z_max"] > bed["z_mm"]:
         bad.append(f"z reaches {e['z_max']} of {bed['z_mm']}")
-    return {"ok": not bad, "reason": "; ".join(bad), "extent": e, "bed": bed}
+    if bad:
+        return {"ok": False, "reason": "; ".join(bad), "extent": e, "bed": bed}
+    if e["z_max"] and not bed.get("z_mm"):
+        return {"ok": None,
+                "reason": f"x and y are inside the bed, but this bed declares "
+                          f"no printable height, so the {e['z_max']} mm this "
+                          f"reaches in z is unchecked",
+                "extent": e, "bed": bed}
+    return {"ok": True, "reason": "", "extent": e, "bed": bed}

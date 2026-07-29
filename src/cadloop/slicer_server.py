@@ -39,7 +39,7 @@ from . import machine as _machine
 from . import slicers as _slicers
 from .common import (find_binary, measure_stl, run as _sh,
                      safe_path, tail as _tail_, workspace)
-from .profiles import (bed_of, classify, machine_facts, profile_roots,
+from .profiles import (classify, machine_facts, profile_roots,
                        reset_cache, root_of)
 
 WORKSPACE = workspace("SLICER_WORKSPACE", "cad")
@@ -401,14 +401,12 @@ def check_bed_fit(model: str, machine_profile: str | None = None,
     if not mesh.get("triangles"):
         return {"ok": None, "reason": "no geometry in that mesh", "mesh": mesh,
                 "stale": warn}
-    # Read the bed off the profile rather than the record's cached copy: the
-    # fingerprint covers the machine profile but not the parents it inherits
-    # its printable_area from, so the cache can be right about the file and
-    # wrong about the bed. The cache is only a fallback for a profile that
-    # declares no bed anywhere.
-    bed = bed_of(profs["machine"])
-    if not bed and not machine_profile:
-        bed = ((_machine.load() or {}).get("derived") or {}).get("bed") or {}
+    # One answer to "how big is this bed", shared with the pipeline, so the
+    # two tools cannot disagree: the live profile over the record's cached
+    # copy, merged field by field. A profile named explicitly is read on its
+    # own terms, since the stored record describes a different machine.
+    bed = _machine.bed(None if machine_profile else _machine.load(),
+                       machine_profile=profs["machine"])
     if not bed:
         return {"ok": None, "reason": "no printable_area in machine profile",
                 "mesh": mesh, "stale": warn}
@@ -417,12 +415,24 @@ def check_bed_fit(model: str, machine_profile: str | None = None,
     fits = (sx + margin_mm <= bed["x_mm"] and sy + margin_mm <= bed["y_mm"])
     fits_rot = (diag + margin_mm <= bed["x_mm"]
                 and diag + margin_mm <= bed["y_mm"])
-    tall = bed["z_mm"] is not None and sz > bed["z_mm"]
+    height = bed.get("z_mm")
+    tall = height is not None and sz > height
+    on_bed = (fits or fits_rot) and not tall
+    # A part that fits the footprint but whose height nobody can check is
+    # not a part that fits. Answering True here skipped the height test
+    # rather than failing it, so a 900 mm column came back printable on a
+    # profile that declares no printable_height. A part with no height at
+    # all is still answerable: there is nothing to check.
+    unchecked_z = height is None and sz > 0
     return {
-        "ok": bool((fits or fits_rot) and not tall),
+        "ok": None if (on_bed and unchecked_z) else bool(on_bed),
+        "reason": (f"the footprint fits, but this machine profile declares no "
+                   f"printable height, so the part's {sz} mm in z is unchecked"
+                   if on_bed and unchecked_z else ""),
         "fits_square": fits,
         "fits_rotated_45": fits_rot,
         "too_tall": bool(tall),
+        "height_checked": height is not None,
         "part_size_mm": mesh["size_mm"],
         "bed": bed,
         "margin_mm": margin_mm,
