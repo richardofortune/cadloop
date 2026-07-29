@@ -395,21 +395,34 @@ def check_bed_fit(model: str, machine_profile: str | None = None,
     try:
         profs, warn = _active_profiles(machine_profile, needs=("machine",))
     except (Refused, _machine.RecordError) as exc:
-        return _refusal(exc)
+        # height_checked rides along on every return, including the ones that
+        # answer nothing, so a caller can read it without guarding first.
+        return {**_refusal(exc), "height_checked": False}
     stl = _safe(model)
     mesh = measure_stl(stl)
     if not mesh.get("triangles"):
         return {"ok": None, "reason": "no geometry in that mesh", "mesh": mesh,
-                "stale": warn}
+                "height_checked": False, "stale": warn}
     # One answer to "how big is this bed", shared with the pipeline, so the
     # two tools cannot disagree: the live profile over the record's cached
     # copy, merged field by field. A profile named explicitly is read on its
     # own terms, since the stored record describes a different machine.
     bed = _machine.bed(None if machine_profile else _machine.load(),
                        machine_profile=profs["machine"])
-    if not bed:
-        return {"ok": None, "reason": "no printable_area in machine profile",
-                "mesh": mesh, "stale": warn}
+    # A bed can be non-empty and still have nothing to measure against: a
+    # record whose cached bed kept a height after the profile stopped
+    # declaring a printable_area merges to {"z_mm": 250.0}, which is truthy
+    # and has no width. Guard on the dimensions this needs, not on the dict
+    # having something in it, or the next line raises KeyError out of an MCP
+    # tool call instead of saying what is wrong.
+    if not bed.get("x_mm") or not bed.get("y_mm"):
+        return {"ok": None,
+                "reason": ("no printable_area in machine profile" if not bed
+                           else "this machine profile's printable area has no "
+                                "width or depth, so there is nothing to "
+                                "measure a footprint against"),
+                "mesh": mesh, "bed": bed, "height_checked": False,
+                "stale": warn}
     sx, sy, sz = mesh["size_mm"]
     diag = (sx + sy) * 0.70711        # footprint of a 45 degree rotation
     fits = (sx + margin_mm <= bed["x_mm"] and sy + margin_mm <= bed["y_mm"])
@@ -424,11 +437,31 @@ def check_bed_fit(model: str, machine_profile: str | None = None,
     # profile that declares no printable_height. A part with no height at
     # all is still answerable: there is nothing to check.
     unchecked_z = height is None and sz > 0
+    # A no is worth as much as a yes only if it says why. These read in the
+    # same voice as the unchecked-height reason above, and in the same voice
+    # as gcode.fits, so a part refused here and a plate refused there explain
+    # themselves the same way.
+    bad: list[str] = []
+    if not (fits or fits_rot):
+        over = []
+        if sx + margin_mm > bed["x_mm"]:
+            over.append(f"x overruns by "
+                        f"{round(sx + margin_mm - bed['x_mm'], 3)} mm")
+        if sy + margin_mm > bed["y_mm"]:
+            over.append(f"y overruns by "
+                        f"{round(sy + margin_mm - bed['y_mm'], 3)} mm")
+        bad.append(f"the {sx} x {sy} mm footprint plus a {margin_mm} mm "
+                   f"margin does not fit this {bed['x_mm']} x {bed['y_mm']} mm "
+                   f"bed square or turned 45 degrees ({', '.join(over)}; the "
+                   f"45 degree diagonal is {round(diag, 3)} mm)")
+    if tall:
+        bad.append(f"the part is {sz} mm tall, {round(sz - height, 3)} mm "
+                   f"more than this printer's {height} mm")
     return {
         "ok": None if (on_bed and unchecked_z) else bool(on_bed),
         "reason": (f"the footprint fits, but this machine profile declares no "
                    f"printable height, so the part's {sz} mm in z is unchecked"
-                   if on_bed and unchecked_z else ""),
+                   if on_bed and unchecked_z else "; ".join(bad)),
         "fits_square": fits,
         "fits_rotated_45": fits_rot,
         "too_tall": bool(tall),

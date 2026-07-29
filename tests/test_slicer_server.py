@@ -136,3 +136,87 @@ def test_a_named_profile_is_not_topped_up_from_the_stored_record(tmp_path, ws):
     assert got["ok"] is None
     assert got["height_checked"] is False
     assert "z_mm" not in got["bed"]
+
+
+# --------------------------------------------------------------------
+# a no that says why, on every return
+# --------------------------------------------------------------------
+
+def test_a_part_too_tall_says_by_how_much(tmp_path, ws):
+    _stl(ws / "column.stl", (100.0, 100.0, 900.0))
+    prof = _profile(tmp_path, "tall", printable_height="250")
+    got = slicer_server.check_bed_fit("column.stl", machine_profile=prof)
+    assert got["ok"] is False
+    # The one answer a user most needs explained used to come back with an
+    # empty reason, because only the None path filled it in.
+    assert got["reason"]
+    assert "900.0 mm tall" in got["reason"]
+    assert "650.0 mm more" in got["reason"]
+    assert "250.0 mm" in got["reason"]
+
+
+def test_a_footprint_that_does_not_fit_says_which_axis_and_by_how_much(
+        tmp_path, ws):
+    _stl(ws / "wide.stl", (400.0, 120.0, 10.0))
+    prof = _profile(tmp_path, "tall", printable_height="250")
+    got = slicer_server.check_bed_fit("wide.stl", machine_profile=prof)
+    assert got["ok"] is False
+    assert "x overruns by 183.0 mm" in got["reason"]     # 400 + 3 - 220
+    assert "y overruns" not in got["reason"]             # 120 fits
+    assert "45 degree diagonal" in got["reason"]
+
+
+def test_both_axes_overrunning_are_both_named(tmp_path, ws):
+    _stl(ws / "huge.stl", (400.0, 300.0, 10.0))
+    prof = _profile(tmp_path, "tall", printable_height="250")
+    got = slicer_server.check_bed_fit("huge.stl", machine_profile=prof)
+    assert "x overruns by 183.0 mm" in got["reason"]
+    assert "y overruns by 83.0 mm" in got["reason"]
+
+
+def test_a_part_that_fits_has_nothing_to_explain(tmp_path, ws):
+    _stl(ws / "small.stl", (40.0, 40.0, 30.0))
+    prof = _profile(tmp_path, "tall", printable_height="250")
+    got = slicer_server.check_bed_fit("small.stl", machine_profile=prof)
+    assert got["ok"] is True and got["reason"] == ""
+
+
+@pytest.mark.parametrize("case", ["refusal", "no_mesh", "no_bed", "no_width"])
+def test_height_checked_is_present_on_every_return(tmp_path, ws, case,
+                                                   monkeypatch):
+    # A caller reading r["height_checked"] must never meet a KeyError, least
+    # of all on the paths that answer nothing.
+    if case == "refusal":
+        got = slicer_server.check_bed_fit("nothing.stl")   # no printer set up
+    elif case == "no_mesh":
+        (ws / "empty.stl").write_bytes(b"\0" * 80 + (0).to_bytes(4, "little"))
+        got = slicer_server.check_bed_fit(
+            "empty.stl", machine_profile=_profile(tmp_path, "p"))
+    elif case == "no_bed":
+        _stl(ws / "part.stl", (40.0, 40.0, 30.0))
+        blank = tmp_path / "blank.json"
+        blank.write_text(json.dumps({"type": "machine", "name": "blank"}))
+        got = slicer_server.check_bed_fit("part.stl", machine_profile=str(blank))
+    else:
+        _stl(ws / "part.stl", (40.0, 40.0, 30.0))
+        monkeypatch.setattr(machine, "bed", lambda *a, **k: {"z_mm": 250.0})
+        got = slicer_server.check_bed_fit(
+            "part.stl", machine_profile=_profile(tmp_path, "p"))
+    assert got["ok"] is None
+    assert got["height_checked"] is False
+    assert got["reason"]
+
+
+def test_a_bed_with_a_height_but_no_width_is_refused_not_a_traceback(
+        tmp_path, ws, monkeypatch):
+    # A record whose cached bed kept a height after the profile stopped
+    # declaring a printable_area merges to {"z_mm": 250.0}: truthy, and with
+    # nothing to measure a footprint against. That used to raise KeyError
+    # straight out of the tool call.
+    _stl(ws / "part.stl", (40.0, 40.0, 30.0))
+    monkeypatch.setattr(machine, "bed", lambda *a, **k: {"z_mm": 250.0})
+    got = slicer_server.check_bed_fit("part.stl",
+                                      machine_profile=_profile(tmp_path, "p"))
+    assert got["ok"] is None
+    assert "no width or depth" in got["reason"]
+    assert got["bed"] == {"z_mm": 250.0}

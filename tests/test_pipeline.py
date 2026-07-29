@@ -539,3 +539,18 @@ def test_totals_count_plates_that_came_out_not_plates_attempted(rig,
     assert len(r["plates"]) == 1            # it is still reported, with a reason
     assert r["plates"][0]["sliced"] is False
     assert r["totals"]["plates"] == 0       # but nobody can print it
+
+
+def test_a_bed_with_a_height_but_no_width_refuses_rather_than_raising(
+        rig, monkeypatch):
+    # The same shape that used to crash check_bed_fit: a merged bed that is
+    # truthy but has nothing to measure a footprint against. run() guards on
+    # the dimensions rather than on the dict, so it refuses; this pins that
+    # it keeps doing so, and that packing.pack is never reached with it.
+    monkeypatch.setattr(machine, "bed", lambda *a, **k: {"z_mm": 250.0})
+    r = pipeline.run("m.scad", rig, ["30"])
+    assert r["ok"] is None
+    assert "printable area" in r["reason"]
+    assert r["machine"]["bed"] == {"z_mm": 250.0}
+    assert r["parts"] == [] and r["plates"] == []
+    assert not (rig / "plates").exists()
