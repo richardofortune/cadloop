@@ -571,6 +571,19 @@ def extract_gcode(archive: str, output: str, plate: int = 1) -> dict[str, Any]:
             "header": {k.strip(): v.strip() for k, v in list(meta.items())[:20]}}
 
 
+@mcp.tool()
+def make_printable(source: str, parts: list[str] | None = None) -> dict[str, Any]:
+    """Take a model to files this printer can run, in one call.
+
+    Renders each part, checks it against the bed, packs what fits onto as
+    few plates as it can, slices them, and proves every printed feature
+    lands on the bed. Reports what it arranged for you and what wants a
+    human. Never edits the model: a part that cannot print as designed is
+    reported, not altered."""
+    from . import pipeline
+    return pipeline.run(source, WORKSPACE, parts)
+
+
 # --------------------------------------------------------------------
 # machine setup
 # --------------------------------------------------------------------
