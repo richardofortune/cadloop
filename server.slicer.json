@@ -3,7 +3,7 @@
   "name": "io.github.richardofortune/cadloop-slicer",
   "title": "cadloop Slicer",
   "description": "Set up a printer once, then check bed fit, slice to .gcode.3mf and extract the G-code with no profile paths.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "websiteUrl": "https://github.com/richardofortune/cadloop",
   "repository": {
     "url": "https://github.com/richardofortune/cadloop",
@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "identifier": "cadloop",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {

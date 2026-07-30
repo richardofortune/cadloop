@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-07-30
 
 One call now takes a model to plates a printer can run, and every plate is
 proved to land on the bed before you are told it is ready.
