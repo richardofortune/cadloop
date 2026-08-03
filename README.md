@@ -97,6 +97,13 @@ can look at what it built rather than inferring from numbers. `render` returns
 OpenSCAD's manifold report alongside a bounding box and volume, where
 `simple: yes` with a sensible volume count is the signal the mesh is printable.
 
+The two split on what happens to the picture. `preview` hands it back and keeps
+nothing; `render` writes it to the workspace when the output ends in `.png`,
+taking the same camera, `imgsize`, `projection` and `full_render` options. Use
+`render` when the image is the artefact rather than the answer. Since `render`
+also takes `source` as text rather than a path, the before half of a comparison
+is `git show <rev>:model.scad` piped straight in — no checkout, no temp file.
+
 **slicer** exposes `setup_printer`, `machine_info`, `make_printable`,
 `slicer_info`, `list_profiles`, `check_bed_fit`, `slice_model`,
 `slice_summary` and `extract_gcode`.
