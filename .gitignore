@@ -20,3 +20,12 @@ docs/walkthrough/out/*
 
 # superpowers worktrees
 /.worktrees/
+
+# wrangler's local state cache and miniflare's simulator, written by any kv or
+# deploy command. Not anchored: it appears beside whichever wrangler.toml ran.
+.wrangler/
+
+# Ties a checkout to one person's feedback Worker, so it is per-deployment
+# config rather than shared code. A clone should not post to someone else's
+# store. The Worker template beside it is source and stays in the repo.
+/.tyrekick.json
