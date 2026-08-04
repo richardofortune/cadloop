@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.3.0 — 2026-08-04
+
+The package no longer carries one project's model checks. `render` can keep a
+picture instead of only handing it back.
+
+### Changed — existing tools
+
+This affects callers written against 0.2.0.
+
+- **`cadloop-verify` has been removed.** It ran the spirograph example's own
+  checks, and the gear half ran off constants compiled into the package, so on
+  an install with no model on disk it printed `14/14 parts mesh cleanly` about
+  parts the caller did not have. Those checks now live in the repository
+  alongside the model they describe: clone it and run
+  `python models/verify_spirograph.py`. The command still exists in this
+  release as a stub that explains the move and **exits 2**, so a Makefile or CI
+  step calling it stops rather than appearing to pass. The stub goes away in
+  0.4.0.
+- **`cadloop` no longer pulls in shapely.** It was only ever needed by the
+  removed checks. `pip install cadloop` now installs `mcp` and nothing else.
+  The `verify` extra remains, for the worked example.
+
+### Added
+
+- **`render` writes images.** A `.png` output is kept in the workspace rather
+  than returned, and takes the same `camera`, `imgsize`, `projection`,
+  `colorscheme` and `full_render` options `preview` has. Use `preview` to look
+  at a model and `render` when the image is the artefact — a before-and-after
+  pair, a figure for a page. Since `render` already accepted `source` as text,
+  the older half of a comparison is `git show <rev>:model.scad` piped in, with
+  no checkout and no temporary file.
+
+### Fixed
+
+- `docs/known-issues.md` described the Creality Print CLI crash as specific to
+  macOS and to 7.1.1. It is neither; it reproduces on 7.2.0 under Windows 11,
+  and does not depend on 3MF input the way the upstream title suggests.
+
 ## 0.2.0 — 2026-07-30
 
 One call now takes a model to plates a printer can run, and every plate is

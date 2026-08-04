@@ -3,7 +3,7 @@
   "name": "io.github.richardofortune/cadloop-openscad",
   "title": "cadloop OpenSCAD",
   "description": "Compile OpenSCAD, read computed values, preview and measure the mesh, without a GUI.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "websiteUrl": "https://github.com/richardofortune/cadloop",
   "repository": {
     "url": "https://github.com/richardofortune/cadloop",
@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "identifier": "cadloop",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
