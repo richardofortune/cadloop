@@ -1,7 +1,7 @@
 [project]
 name = "cadloop"
 version = "0.2.0"
-description = "Parametric CAD, meshing verification and slicing, behind MCP"
+description = "Parametric CAD and slicing behind MCP, with every plate proven on the bed"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -28,6 +28,8 @@ classifiers = [
 dependencies = ["mcp>=1.2,<2"]
 
 [project.optional-dependencies]
+# For the worked example's own checker, models/verify_spirograph.py, which is
+# not part of the package. cadloop itself needs nothing beyond mcp.
 verify = ["shapely>=2.0"]
 dev = ["pytest>=8"]
 
@@ -39,7 +41,6 @@ Issues = "https://github.com/richardofortune/cadloop/issues"
 [project.scripts]
 cadloop-openscad = "cadloop.openscad_server:main"
 cadloop-slicer = "cadloop.slicer_server:main"
-cadloop-verify = "cadloop.gearcheck:main"
 
 [build-system]
 requires = ["hatchling"]
