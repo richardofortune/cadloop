@@ -1,6 +1,6 @@
 [project]
 name = "cadloop"
-version = "0.2.0"
+version = "0.3.0"
 description = "Parametric CAD and slicing behind MCP, with every plate proven on the bed"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -41,6 +41,9 @@ Issues = "https://github.com/richardofortune/cadloop/issues"
 [project.scripts]
 cadloop-openscad = "cadloop.openscad_server:main"
 cadloop-slicer = "cadloop.slicer_server:main"
+# Removed in 0.3.0, kept as a signpost so 0.2.0 callers get a reason rather
+# than "command not found". Delete this line and _verify_moved.py in 0.4.0.
+cadloop-verify = "cadloop._verify_moved:main"
 
 [build-system]
 requires = ["hatchling"]
