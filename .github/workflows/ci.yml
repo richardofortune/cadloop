@@ -43,7 +43,7 @@ jobs:
       - name: Rolling interference and layout checks
         env:
           OPENSCAD_BIN: /snap/bin/openscad-nightly
-        run: cadloop-verify
+        run: python models/verify_spirograph.py
 
       - name: Smoke test, both servers over MCP stdio
         run: python tests/smoke.py

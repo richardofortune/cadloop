@@ -45,7 +45,7 @@ channel_d     = 1.4;
 
 /* [Wheels] */
 // No 48. It is exactly half the 96 tooth ring, and a wheel at half the ring's
-// count traces an ellipse and nothing else. Run `cadloop-verify --patterns`
+// count traces an ellipse and nothing else. Run `python models/verify_spirograph.py --patterns`
 // before adding a count: lobes are ring / gcd(ring, wheel), so a wheel sharing
 // most of its factors with the ring draws something plain.
 wheel_teeth     = [24, 30, 32, 36, 40, 45, 52, 56, 63, 72, 80];
