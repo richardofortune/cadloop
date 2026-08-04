@@ -49,14 +49,28 @@ channel_d     = 1.4;
 // before adding a count: lobes are ring / gcd(ring, wheel), so a wheel sharing
 // most of its factors with the ring draws something plain.
 wheel_teeth     = [24, 30, 32, 36, 40, 45, 52, 56, 63, 72, 80];
-wheel_thickness = 4;
+// Thickness is what decides whether the nib reaches the paper. A pen is a
+// cone: the bore has to clear not the tip but the pen's width a plate's
+// thickness back from it, and at 4 mm that is the barrel, so the pen bottoms
+// out and hovers. 2.5 is near a shop-bought wheel. Thinner still if your pen
+// needs it: measure the pen 2 mm back from the nib and keep that under
+// pen_hole_d. Nothing about hole spacing depends on this, so it costs no holes.
+wheel_thickness = 2.5;
 pen_hole_d      = 3.0;   // bore. 2.4 measured too tight once printed. Measure yours
 pen_hole_edge   = 3.0;   // material left outside the outermost hole
-pen_r0          = 5.5;   // first hole, leaves room for the tooth count
+pen_r0          = 5.5;   // floor for the first hole, clears the tooth count
+// ...but never nearer the middle than this much of the pitch radius. A fixed
+// 5.5 is a third of the way out on the 24, and a useless twelfth on the 80,
+// where the first holes drew cramped little circles worth none of the plate.
+pen_r0_frac     = 0.25;
 pen_spiral_dr   = 1.4;   // radial step between successive holes
 pen_max_holes   = 24;    // cap, so the big wheels stay strong
 pen_cs_rim      = 0.5;   // countersink flare per side, on the top face
-pen_cs_depth    = 1.0;   // how deep the funnel cuts
+// Depth as a fraction of the plate, not a fixed number: a fixed one read as
+// too shallow at 4 mm and again at 2.5. Only the flare above costs hole
+// spacing, so depth is free and worth spending. 0.6 leaves the rest of the
+// plate as parallel bore to steady the pen.
+pen_cs_frac     = 0.6;
 
 /* [Hole labelling] */
 // Every hole is numbered, counting outward from the centre.
@@ -226,24 +240,34 @@ module ring() {
 
 GOLDEN = 137.50776;
 
+// The figure a hole draws is set by how far out it sits as a fraction of the
+// pitch radius, not by its distance in millimetres: near the middle it traces
+// something close to a circle whatever the wheel. So the innermost hole is
+// placed by whichever constraint binds, the label in the middle or that
+// fraction, which keeps every hole on every wheel inside the range that
+// actually draws something.
+function pen_r_min(n) = max(pen_r0, pen_r0_frac * gear_module * n / 2);
 function pen_r_max(n) = root_r(n) - pen_hole_edge - pen_hole_d / 2;
 function pen_count(n) =
     max(1, min(pen_max_holes,
-               floor((pen_r_max(n) - pen_r0) / pen_spiral_dr) + 1));
+               floor((pen_r_max(n) - pen_r_min(n)) / pen_spiral_dr) + 1));
 function pen_radius(n, i) =
-    let (k = pen_count(n))
-    k < 2 ? pen_r0 : pen_r0 + (pen_r_max(n) - pen_r0) * i / (k - 1);
+    let (k = pen_count(n), a = pen_r_min(n))
+    k < 2 ? a : a + (pen_r_max(n) - a) * i / (k - 1);
 
 // A straight bore with a funnel around the top, the way a shop-bought
 // spirograph is countersunk: the pen tip drops in instead of being aimed,
 // and it can lean without the printed rim catching on its shoulder.
 // Cut in 3D, so every wheel subtracts this rather than a flat circle.
+function pen_cs_depth() = pen_cs_frac * wheel_thickness;
+
 module pen_bore() {
+    cs = pen_cs_depth();
     translate([0, 0, -0.5])
         cylinder(d = pen_hole_d, h = wheel_thickness + 1, $fn = 24);
-    translate([0, 0, wheel_thickness - pen_cs_depth])
+    translate([0, 0, wheel_thickness - cs])
         cylinder(d1 = pen_hole_d, d2 = pen_hole_d + 2 * pen_cs_rim,
-                 h = pen_cs_depth + 0.01, $fn = 24);
+                 h = cs + 0.01, $fn = 24);
 }
 
 // Closest two hole centres may sit before their funnels meet. 0.8 mm of
