@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>cadloop — the pen holes, before and after</title>
+<title>cadloop — getting a pen through the disk</title>
 <style>
   :root{
     /* Same palette as docs/walkthrough: OpenSCAD's preview blue, amber for
-       anything the model computed, red reserved for the thing that was wrong. */
+       anything the model computed, red reserved for what was wrong. */
     --ink:#0E131C; --panel:#151C29; --panel-2:#1B2434;
     --line:#26314A; --blue:#5B8DEF; --amber:#E8A33D; --red:#FF3B30;
     --paper:#E6EAF2; --dim:#8792A6; --good:#5BD6A0;
@@ -28,7 +28,7 @@
     content:""; position:fixed; inset:0; pointer-events:none;
     background:radial-gradient(120% 90% at 50% 0%,transparent 35%,var(--ink) 100%);
   }
-  .wrap{position:relative; max-width:1040px; margin:0 auto; padding:18px 22px 56px}
+  .wrap{position:relative; max-width:1060px; margin:0 auto; padding:18px 22px 56px}
 
   header{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
          padding-bottom:12px; border-bottom:1px solid var(--line)}
@@ -40,7 +40,7 @@
   .spacer{flex:1}
   .src{font-family:var(--mono); font-size:11px; color:var(--dim)}
 
-  .cols{display:grid; grid-template-columns:214px 1fr; gap:20px; margin-top:16px}
+  .cols{display:grid; grid-template-columns:224px 1fr; gap:20px; margin-top:16px}
 
   .rail h2{font-family:var(--mono); font-size:11px; letter-spacing:.18em;
            text-transform:uppercase; color:var(--dim); margin:0 0 10px; font-weight:600}
@@ -48,6 +48,10 @@
   .rail ol::before{content:""; position:absolute; left:12px; top:14px; bottom:14px;
                    width:1px; background:var(--line)}
   .rail li{position:relative}
+  .act{font-family:var(--mono); font-size:9.5px; letter-spacing:.16em;
+       text-transform:uppercase; color:var(--dim); opacity:.7;
+       margin:14px 0 5px 9px}
+  .act.first{margin-top:0}
   .step{
     width:100%; text-align:left; background:transparent; border:0; cursor:pointer;
     display:grid; grid-template-columns:25px 1fr auto; align-items:center; gap:9px;
@@ -68,9 +72,9 @@
   .step.bad[aria-current="true"] .dot{background:var(--red)}
 
   .panel{background:var(--panel); border:1px solid var(--line); border-radius:11px;
-         padding:17px 19px; min-height:560px}
+         padding:17px 19px; min-height:580px}
   .panel h3{margin:0; font-family:var(--mono); font-size:18px; letter-spacing:-.01em}
-  .panel .lede{margin:6px 0 14px; color:var(--dim); max-width:66ch; font-size:14px}
+  .panel .lede{margin:6px 0 14px; color:var(--dim); max-width:68ch; font-size:14px}
   .pane{display:none}
   .pane[data-on="1"]{display:block; animation:in .13s ease-out}
   @keyframes in{from{opacity:0}to{opacity:1}}
@@ -87,18 +91,22 @@
   blockquote cite{display:block; margin-top:7px; font-family:var(--mono);
                   font-size:11px; font-style:normal; color:var(--dim)}
 
-  /* ---- before / after ---- */
   .ba{display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start}
   .ba figure{margin:0}
   .ba img{width:100%; display:block; border-radius:8px; border:1px solid var(--line);
           background:#F6F7F9}
-  .ba .tag{display:inline-block; font-family:var(--mono); font-size:10px;
-           letter-spacing:.16em; text-transform:uppercase; padding:3px 9px;
-           border-radius:20px; margin-bottom:8px}
-  .ba .before .tag{background:#3A1614; color:var(--red)}
-  .ba .after  .tag{background:#123024; color:var(--good)}
+  .tag{display:inline-block; font-family:var(--mono); font-size:10px;
+       letter-spacing:.16em; text-transform:uppercase; padding:3px 9px;
+       border-radius:20px; margin-bottom:8px}
+  .t-was{background:#3A1614; color:var(--red)}
+  .t-mid{background:#3A2E14; color:var(--amber)}
+  .t-now{background:#123024; color:var(--good)}
   figcaption{margin-top:8px; font-family:var(--mono); font-size:11.5px; color:var(--dim)}
   figcaption b{color:var(--paper); font-weight:500}
+
+  .wide{margin:0}
+  .wide img{width:100%; display:block; border-radius:8px;
+            border:1px solid var(--line); background:#F6F7F9}
 
   .kv{width:100%; border-collapse:collapse; font-family:var(--mono); font-size:12.5px;
       margin-top:14px}
@@ -109,9 +117,10 @@
   .kv .keep td:last-child{color:var(--good)}
 
   .why{margin-top:14px; font-size:12.5px; color:var(--dim); font-family:var(--mono);
-       max-width:74ch}
+       max-width:76ch}
   .why b{color:var(--paper); font-weight:500}
   .why.warn{color:#E9B8B4}
+  .why.note{border-left:2px solid var(--line); padding-left:11px}
 
   .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start}
 
@@ -120,7 +129,7 @@
          display:flex; gap:14px; flex-wrap:wrap}
   footer b{color:var(--paper); font-weight:500}
 
-  @media (max-width:860px){
+  @media (max-width:880px){
     .cols{grid-template-columns:1fr} .ba{grid-template-columns:1fr}
     .grid2{grid-template-columns:1fr} .panel{min-height:0}
   }
@@ -128,10 +137,10 @@
 </style>
   <!-- Tyrekick: so a shared review link unfurls as an invitation, not a bare URL -->
   <meta property="og:type" content="website">
-  <meta property="og:title" content="cadloop — the pen holes, before and after">
-  <meta name="twitter:title" content="cadloop — the pen holes, before and after">
-  <meta property="og:description" content="Review cadloop — the pen holes, before and after and pin your comments.">
-  <meta name="twitter:description" content="Review cadloop — the pen holes, before and after and pin your comments.">
+  <meta property="og:title" content="cadloop — getting a pen through the disk">
+  <meta name="twitter:title" content="cadloop — getting a pen through the disk">
+  <meta property="og:description" content="Two rounds of fixing the spirograph pen holes, and what the first round got wrong.">
+  <meta name="twitter:description" content="Two rounds of fixing the spirograph pen holes, and what the first round got wrong.">
   <meta name="twitter:card" content="summary">
 </head>
 <body>
@@ -139,22 +148,32 @@
 
   <header>
     <span class="mark">cad<b>loop</b></span>
-    <span class="eyebrow">pen holes, refined</span>
+    <span class="eyebrow">pen holes, two rounds</span>
     <span class="spacer"></span>
-    <span class="src">models/spirograph.scad &middot; +78 &minus;27, one file</span>
+    <span class="src">models/spirograph.scad &middot; one file</span>
   </header>
 
   <div class="cols">
     <nav class="rail" aria-label="What happened">
       <h2>What happened</h2>
+      <p class="act first">Round one &mdash; the hole</p>
       <ol>
-        <li><button class="step" id="s-report" aria-current="true"><span class="dot" aria-hidden="true"></span><span>the report</span><span class="who" aria-hidden="true">you</span></button></li>
-        <li><button class="step" id="s-bore"><span class="dot" aria-hidden="true"></span><span>the bore</span><span class="who" aria-hidden="true">2.4 &rarr; 3.0</span></button></li>
-        <li><button class="step" id="s-cs"><span class="dot" aria-hidden="true"></span><span>the funnel</span><span class="who" aria-hidden="true">pen_bore</span></button></li>
-        <li><button class="step bad" id="s-crowd"><span class="dot" aria-hidden="true"></span><span>what it broke</span><span class="who" aria-hidden="true">3.8 mm</span></button></li>
-        <li><button class="step mine" id="s-thin"><span class="dot" aria-hidden="true"></span><span>the thinning</span><span class="who" aria-hidden="true">nc_holes</span></button></li>
-        <li><button class="step" id="s-check"><span class="dot" aria-hidden="true"></span><span>the check</span><span class="who" aria-hidden="true">assert</span></button></li>
-        <li><button class="step" id="s-proof"><span class="dot" aria-hidden="true"></span><span>the proof</span><span class="who" aria-hidden="true">verifier</span></button></li>
+        <li><button class="step" data-pane="report" aria-current="true"><span class="dot" aria-hidden="true"></span><span>the report</span><span class="who" aria-hidden="true">you</span></button></li>
+        <li><button class="step" data-pane="bore"><span class="dot" aria-hidden="true"></span><span>the bore</span><span class="who" aria-hidden="true">2.4 &rarr; 3.0</span></button></li>
+        <li><button class="step" data-pane="cs"><span class="dot" aria-hidden="true"></span><span>the funnel</span><span class="who" aria-hidden="true">pen_bore</span></button></li>
+        <li><button class="step bad" data-pane="crowd"><span class="dot" aria-hidden="true"></span><span>what it broke</span><span class="who" aria-hidden="true">3.8 mm</span></button></li>
+        <li><button class="step mine" data-pane="thin"><span class="dot" aria-hidden="true"></span><span>the thinning</span><span class="who" aria-hidden="true">nc_holes</span></button></li>
+      </ol>
+      <p class="act">Round two &mdash; the plate</p>
+      <ol>
+        <li><button class="step bad" data-pane="still"><span class="dot" aria-hidden="true"></span><span>still not right</span><span class="who" aria-hidden="true">you</span></button></li>
+        <li><button class="step" data-pane="plate"><span class="dot" aria-hidden="true"></span><span>the plate</span><span class="who" aria-hidden="true">4 &rarr; 2.5</span></button></li>
+        <li><button class="step mine" data-pane="layout"><span class="dot" aria-hidden="true"></span><span>the layout</span><span class="who" aria-hidden="true">d / rp</span></button></li>
+      </ol>
+      <p class="act">Both rounds</p>
+      <ol>
+        <li><button class="step" data-pane="check"><span class="dot" aria-hidden="true"></span><span>the check</span><span class="who" aria-hidden="true">assert</span></button></li>
+        <li><button class="step" data-pane="proof"><span class="dot" aria-hidden="true"></span><span>the proof</span><span class="who" aria-hidden="true">verifier</span></button></li>
       </ol>
     </nav>
 
@@ -168,69 +187,56 @@
           When I print them they are too narrow for a pen to go through. I think the
           original spirograph had a countersunk shape around each pen-hole so it was
           easier to draw with.
-          <cite>Richard, 4 August 2026</cite>
+          <cite>Richard, first report</cite>
         </blockquote>
-        <p class="lede">Two separate faults in one sentence. The hole is too small, and its
-          top edge is a square-cut rim that a pen tip has to be aimed into rather than
-          dropped into. The model had them as plain 2.4&nbsp;mm circles cut straight
-          through a 4&nbsp;mm plate.</p>
-        <div class="ba">
-          <figure class="before">
-            <span class="tag">before</span>
-            <img src="assets/sec-before.png" alt="Cross-section of a pen hole: a plain straight bore with square top and bottom edges">
-            <figcaption>Section through hole&nbsp;1 of the 36T wheel.
-              <b>2.4&nbsp;mm</b> straight through, square edges top and bottom.</figcaption>
-          </figure>
-          <figure class="after">
-            <span class="tag">after</span>
-            <img src="assets/sec-after.png" alt="Cross-section of the same pen hole: a wider bore with a cone opening out at the top face">
-            <figcaption>Same cut, same camera. <b>3.0&nbsp;mm</b> bore opening to
-              <b>4.0&nbsp;mm</b> across the top <b>1.0&nbsp;mm</b>.</figcaption>
-          </figure>
-        </div>
-        <p class="why">Both images are <code>projection(cut&nbsp;=&nbsp;true)</code> through
-          the plane <b>y&nbsp;=&nbsp;0</b>, which passes exactly through the centre of pen
-          hole&nbsp;1. The notches along the top edge are the debossed hole number, cut by
-          the same plane. Nothing here is drawn by hand.</p>
+        <p class="lede">Two faults named in one sentence: the hole is too small, and its
+          top edge is a square-cut rim a pen has to be aimed into rather than dropped
+          into. The model had them as plain 2.4&nbsp;mm circles cut straight through a
+          4&nbsp;mm plate.</p>
+        <figure class="wide">
+          <span class="tag t-was">as printed</span>
+          <img src="assets/sec-orig.png" alt="Cross-section of a pen hole: a plain straight bore with square top and bottom edges through a 4 mm plate">
+          <figcaption>Section through hole&nbsp;1 of the 36T wheel.
+            <b>2.4&nbsp;mm</b> straight through <b>4&nbsp;mm</b>, square edges top and
+            bottom.</figcaption>
+        </figure>
+        <p class="why">Every section on this page is
+          <code>projection(cut&nbsp;=&nbsp;true)</code> through the plane
+          <b>y&nbsp;=&nbsp;0</b>, which passes exactly through the centre of pen
+          hole&nbsp;1. The notches along the top edge are the debossed hole number, cut
+          by the same plane. Nothing here is drawn by hand.</p>
+        <p class="why note">What follows is two rounds, because the first fixed a real
+          fault and still left the tool unusable. That second report is step six.</p>
       </section>
 
       <!-- 2 ------------------------------------------------------------ -->
       <section class="pane" data-pane="bore">
         <h3>the bore</h3>
-        <p class="lede">The first fault is the one that actually stops a pen. A hole
-          modelled at 2.4&nbsp;mm does not print at 2.4&nbsp;mm: the perimeters are laid
-          down on the inside of the path and squash inward, so a small hole always comes
-          out undersize. 2.4 was already at the edge; the print pushed it over.</p>
+        <p class="lede">A hole modelled at 2.4&nbsp;mm does not print at 2.4&nbsp;mm. The
+          perimeters are laid down on the inside of the path and squash inward, so a
+          small hole always comes out undersize. 2.4 was already at the edge; the print
+          pushed it over.</p>
         <pre><span class="c">/* [Wheels] */</span>
 <span class="del">-pen_hole_d      = 2.4;   // suits a 0.5 to 0.7 mm gel pen. Measure yours</span>
 <span class="add">+pen_hole_d      = 3.0;   // bore. 2.4 measured too tight once printed. Measure yours</span></pre>
-        <p class="why">This stays the calibration knob. Everything downstream is derived
-          from it &mdash; how far the outermost hole sits from the rim
-          (<code>pen_r_max</code>), how many holes each wheel gets
-          (<code>pen_count</code>), and the spacing rule added in step&nbsp;5 &mdash; so if
-          3.0 still binds on your printer, change this one number and the rest re-derives.
-          Nothing else is hard-coded to it.</p>
-        <table class="kv">
-          <tr><td>modelled bore, before</td><td>2.4 mm</td></tr>
-          <tr><td>modelled bore, after</td><td>3.0 mm</td></tr>
-          <tr><td>plate thickness</td><td>4.0 mm</td></tr>
-          <tr><td>holes on the 24T wheel</td><td>5</td></tr>
-          <tr><td>holes on the 36T wheel</td><td>11</td></tr>
-          <tr><td>holes on the 80T wheel</td><td>24 (capped)</td></tr>
-        </table>
-        <p class="why warn">One caveat, stated plainly: 3.0&nbsp;mm is an estimate for a
-          gel pen after shrinkage, not a measurement of your printer. The report said "too
-          narrow", it did not say by how much. First print is the test.</p>
+        <p class="why">This is the calibration knob, and everything downstream derives
+          from it: how far the outermost hole sits from the rim
+          (<code>pen_r_max</code>), how many holes a wheel gets
+          (<code>pen_count</code>), and the spacing rule in step&nbsp;five. Change this
+          one number and the rest re-derives. Nothing is hard-coded to it.</p>
+        <p class="why warn">Worth saying plainly: 3.0&nbsp;mm was an estimate for a gel
+          pen after shrinkage, not a measurement. It turned out not to be the binding
+          constraint at all.</p>
       </section>
 
       <!-- 3 ------------------------------------------------------------ -->
       <section class="pane" data-pane="cs">
         <h3>the funnel</h3>
-        <p class="lede">The second fault is the one you named. A shop-bought spirograph
-          countersinks every hole so the pen tip finds the hole on its own and can lean
-          without its shoulder catching on the rim. The old model cut a flat circle out of
-          a 2D outline before extruding it, which cannot express a funnel at all, so the
-          hole became a 3D cut instead.</p>
+        <p class="lede">The second fault named in the report. A shop-bought spirograph
+          countersinks every hole so the pen finds it without aiming and can lean without
+          its shoulder catching the rim. The old model cut a flat circle out of a 2D
+          outline before extruding it, which cannot express a funnel at all, so the hole
+          became a 3D cut.</p>
         <pre><span class="c">// A straight bore with a funnel around the top, the way a shop-bought
 // spirograph is countersunk: the pen tip drops in instead of being aimed,
 // and it can lean without the printed rim catching on its shoulder.
@@ -242,43 +248,48 @@ module <span class="k">pen_bore</span>() {
         cylinder(d1 = pen_hole_d, d2 = pen_hole_d + 2 * pen_cs_rim,
                  h = pen_cs_depth + 0.01, $fn = 24);
 }</pre>
+        <div class="ba" style="margin-top:16px">
+          <figure>
+            <span class="tag t-was">before</span>
+            <img src="assets/sec-orig.png" alt="Straight 2.4 mm bore with a square top edge">
+            <figcaption>2.4&nbsp;mm, square rim.</figcaption>
+          </figure>
+          <figure>
+            <span class="tag t-mid">round one</span>
+            <img src="assets/sec-funnel.png" alt="3.0 mm bore with a cone opening out at the top face of a 4 mm plate">
+            <figcaption>3.0&nbsp;mm opening to <b>4.0&nbsp;mm</b> across the top
+              1.0&nbsp;mm. Plate still 4&nbsp;mm.</figcaption>
+          </figure>
+        </div>
         <p class="why">One module, subtracted by both the circular wheels and the three
-          non-circular shapes. The old code had the hole geometry written out twice, once
-          in <code>pen_spiral()</code> and once inline in <code>nc_wheel()</code>; a fix
-          applied to one of them would have left the other still wrong. That is why the
-          diff deletes as well as adds.</p>
-        <table class="kv">
-          <tr><td><code>pen_cs_rim</code> &mdash; flare per side</td><td>0.5 mm</td></tr>
-          <tr><td><code>pen_cs_depth</code> &mdash; how deep it cuts</td><td>1.0 mm</td></tr>
-          <tr><td>opening at the top face</td><td>4.0 mm</td></tr>
-          <tr><td>cone half-angle</td><td>26.6&deg;</td></tr>
-          <tr><td>which face</td><td>the labelled one</td></tr>
-        </table>
+          shapes. The old code wrote the hole geometry out twice, once in
+          <code>pen_spiral()</code> and once inline in <code>nc_wheel()</code>, so a fix
+          to one would have left the other wrong. That is why the diff deletes as well as
+          adds.</p>
       </section>
 
       <!-- 4 ------------------------------------------------------------ -->
       <section class="pane" data-pane="crowd">
         <h3>what it broke</h3>
-        <p class="lede">A wider hole with a funnel around it needs more room than a narrow
+        <p class="lede">A wider hole with a funnel round it needs more room than a narrow
           one. On the eleven circular wheels there was room to spare. On the ellipse and
-          the trefoil there was not, and this is the part of the job that was not in the
-          request.</p>
+          the trefoil there was not, and this part of the job was not in the request.</p>
         <p class="why">The three non-circular wheels carry hand-generated hole tables laid
           out on a <b>2.5333 module</b> grid, which at module&nbsp;1.5 puts hole centres
           <b>3.8&nbsp;mm</b> apart. A 3.0&nbsp;mm bore with a 4.0&nbsp;mm funnel and two
           perimeters of wall between neighbours needs <b>4.8&nbsp;mm</b>. At 3.8 the
-          funnels merge into a groove &mdash; and a pen that can slide from one hole to the
-          next does not just look wrong, it ruins the drawing.</p>
+          funnels merge into a groove &mdash; and a pen that can slide from one hole to
+          the next does not merely look wrong, it ruins the drawing.</p>
         <div class="ba">
-          <figure class="before">
-            <span class="tag">before</span>
-            <img src="assets/ellipse-before.png" alt="Ellipse wheel with twenty pen holes packed close together, their numbers overlapping">
+          <figure>
+            <span class="tag t-was">before</span>
+            <img src="assets/ellipse-orig.png" alt="Ellipse wheel with twenty pen holes packed close together, their numbers overlapping">
             <figcaption>ellipse, <b>20</b> holes at 3.8&nbsp;mm centres. The numbers
               collide too, which was the visible symptom of the same crowding.</figcaption>
           </figure>
-          <figure class="after">
-            <span class="tag">after</span>
-            <img src="assets/ellipse-after.png" alt="Ellipse wheel with ten countersunk pen holes, evenly spaced, numbers legible">
+          <figure>
+            <span class="tag t-now">after</span>
+            <img src="assets/ellipse-thin.png" alt="Ellipse wheel with ten countersunk pen holes, evenly spaced, numbers legible">
             <figcaption>ellipse, <b>10</b> holes at 7.6&nbsp;mm centres, countersunk.
               Both ends of each long ray kept.</figcaption>
           </figure>
@@ -289,10 +300,9 @@ module <span class="k">pen_bore</span>() {
           <tr class="keep"><td>egg &mdash; already 4.98 mm apart</td><td>8 &rarr; 8 holes</td></tr>
           <tr class="keep"><td>eleven circular wheels</td><td>unchanged</td></tr>
         </table>
-        <p class="why">The spacings available on those tables are multiples of 3.8&nbsp;mm,
-          so it is all or every other &mdash; there is no arrangement that keeps 20 holes
-          and fits a funnel. Fewer, usable holes beat more holes the pen cannot sit in.
-          Call it the other way and it is one number to change.</p>
+        <p class="why">The spacings those tables offer are multiples of 3.8&nbsp;mm, so it
+          is all or every other; no arrangement keeps 20 holes and fits a funnel. Fewer
+          usable holes beat more holes the pen cannot sit in.</p>
       </section>
 
       <!-- 5 ------------------------------------------------------------ -->
@@ -315,20 +325,127 @@ function <span class="k">thin</span>(hs, i = 0, kept = []) =
 
 function <span class="k">nc_holes</span>(sh) = rev(thin(rev(sh[6])));</pre>
         <p class="why">Backwards matters. Each ray in those tables is listed inner to
-          outer, and the outermost hole is the one that draws the widest figure, so working
-          from the end of the list is what saves it. The result is reversed back so the
-          numbering still counts outward from the centre, the way the rest of the set does.
-          The threshold is derived, not typed: <b>bore + flare + 0.8&nbsp;mm</b> of wall,
-          where 0.8 is two perimeters at a 0.4&nbsp;mm nozzle.</p>
-        <p class="why">Because it is derived, it undoes itself. Raise <code>gear_module</code>
-          to 2.0 and the same tables come out at 5.07&nbsp;mm centres, above the threshold,
-          and every dropped hole comes back with no edit.</p>
+          outer, and the outermost hole draws the widest figure, so working from the end
+          of the list is what saves it. The result is reversed back so the numbering still
+          counts outward. The threshold is derived, not typed: <b>bore + flare +
+          0.8&nbsp;mm</b> of wall, where 0.8 is two perimeters at a 0.4&nbsp;mm
+          nozzle.</p>
+        <p class="why">Because it is derived it undoes itself. Raise
+          <code>gear_module</code> to 2.0 and the same tables come out at 5.07&nbsp;mm
+          centres, above the threshold, and every dropped hole returns with no edit.</p>
       </section>
 
       <!-- 6 ------------------------------------------------------------ -->
+      <section class="pane" data-pane="still">
+        <h3>still not right</h3>
+        <blockquote>
+          I still can't get the pen to touch the paper comfortably. The countersink isn't
+          sufficient and making it wider will reduce the space we have for pen holes on
+          the shapes.
+          <cite>Richard, second report</cite>
+        </blockquote>
+        <p class="lede">Round one widened the hole and relieved its rim, and the pen still
+          would not reach the paper. Hole diameter was never the binding constraint.
+          Plate thickness was.</p>
+        <p class="why">A pen is a cone. For the nib to touch paper it has to pass the
+          <i>whole</i> plate, so what must clear the bore is not the tip but the pen's own
+          diameter <b>one plate-thickness back from the nib</b>. At 4&nbsp;mm back most
+          gel pens are already into the barrel taper and wider than 3&nbsp;mm, so the pen
+          wedges partway down and hovers. A countersink only relieves the top
+          1&nbsp;mm, so it never reaches the part of the bore doing the wedging &mdash;
+          exactly what the second report says.</p>
+        <p class="why">Both obvious levers were blocked. A wider bore or a deeper funnel
+          would each buy a little clearance, and both spend it out of the hole spacing on
+          the ellipse and trefoil that step four had already paid for once.</p>
+        <div class="ba">
+          <figure>
+            <span class="tag t-mid">round one</span>
+            <img src="assets/sec-funnel.png" alt="3 mm bore through a 4 mm plate with a 1 mm funnel">
+            <figcaption>3.0&nbsp;mm bore, <b>4&nbsp;mm</b> of plate to get through.</figcaption>
+          </figure>
+          <figure>
+            <span class="tag t-now">round two</span>
+            <img src="assets/sec-thin.png" alt="3 mm bore through a 2.5 mm plate with a 0.6 mm funnel">
+            <figcaption>Same bore, <b>2.5&nbsp;mm</b> of plate. The pen has
+              1.5&nbsp;mm less of itself to force through.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- 7 ------------------------------------------------------------ -->
+      <section class="pane" data-pane="plate">
+        <h3>the plate</h3>
+        <p class="lede">Thinning is the one lever that costs nothing already spent. Hole
+          spacing is a radial constraint with no relationship to thickness, so the ellipse
+          and trefoil keep every hole step five left them.</p>
+        <pre><span class="del">-wheel_thickness = 4;</span>
+<span class="add">+wheel_thickness = 2.5;</span>
+<span class="del">-pen_cs_depth    = 1.0;   // how deep the funnel cuts</span>
+<span class="add">+pen_cs_depth    = 0.6;   // how deep the funnel cuts. Scaled with the plate</span></pre>
+        <table class="kv">
+          <tr><td>plate</td><td>4.0 &rarr; 2.5 mm</td></tr>
+          <tr><td>funnel depth</td><td>1.0 &rarr; 0.6 mm</td></tr>
+          <tr><td>straight bore left to guide the pen</td><td>1.9 mm</td></tr>
+          <tr class="keep"><td>holes lost to this change</td><td>none</td></tr>
+          <tr class="keep"><td>ring, and its 7 mm toothed bore</td><td>untouched</td></tr>
+          <tr><td>whole set, print time</td><td>13.0 &rarr; 10.7 h</td></tr>
+          <tr><td>whole set, filament</td><td>62.8 &rarr; 53.8 m</td></tr>
+        </table>
+        <p class="why">2.5&nbsp;mm is near a shop-bought wheel. The teeth are
+          3.375&nbsp;mm tall, so tooth engagement is nowhere near the limit, and the
+          ring's internal teeth already run the full 7&nbsp;mm of ring-plus-lip height, so
+          nothing about the ring had to move.</p>
+        <p class="why warn">This is the number that is still a guess. Take a caliper to
+          your pen <b>2&nbsp;mm back from the nib</b>; if that is under 3&nbsp;mm the
+          plate is thin enough. If not, drop <code>wheel_thickness</code> again &mdash;
+          2.0 prints perfectly well. One 24T wheel settles it in about twenty minutes
+          rather than ten hours.</p>
+      </section>
+
+      <!-- 8 ------------------------------------------------------------ -->
+      <section class="pane" data-pane="layout">
+        <h3>the layout</h3>
+        <blockquote>
+          I also note that the layout of the holes is currently not likely to create
+          spirals or other compelling shapes.
+          <cite>Richard, same report</cite>
+        </blockquote>
+        <p class="lede">Half right, and the half that is right can be pointed at exactly.
+          Rather than agree, the figure every hole traces was computed and drawn.</p>
+        <p class="why">What a hole draws depends on how far out it sits <b>as a fraction
+          of the pitch radius</b>, written <code>d/rp</code> below. Near the middle it
+          traces something close to a circle whatever the wheel; out near the rim it
+          traces the sharp cusped star a spirograph is bought for. Angular position only
+          rotates the result, so the golden-angle scatter costs nothing.</p>
+        <p class="why">Across the set the variety is real &mdash; lobe counts of 3, 4, 6,
+          8, 12, 16, 24 and 32, and dense rosettes on the 52 and 63. But
+          <code>pen_r0</code> was an <b>absolute</b> 5.5&nbsp;mm, and an absolute radius
+          means something different on every wheel: 31% of the pitch radius on the 24,
+          and a useless <b>9%</b> on the 80. The innermost holes of the big wheels drew
+          cramped knots worth none of the plate.</p>
+        <figure class="wide" style="margin-top:6px">
+          <img src="assets/layout.png" alt="Six spirograph figures. The top row, in red, shows three cramped tangled shapes traced from the old inner hole positions. The bottom row, in green, shows three clean six-petal rosettes traced from the new positions.">
+          <figcaption>The 80T wheel's first, third and sixth holes.
+            <b>Red</b>&nbsp;= where they were, <b>green</b>&nbsp;= where they are now.
+            Computed hypotrochoids for the real 96-tooth ring, not illustrations.</figcaption>
+        </figure>
+        <pre style="margin-top:14px"><span class="c">// The figure a hole draws is set by how far out it sits as a fraction of the
+// pitch radius, not by its distance in millimetres.</span>
+function <span class="k">pen_r_min</span>(n) = max(pen_r0, pen_r0_frac * gear_module * n / 2);</pre>
+        <table class="kv">
+          <tr><td>80T range, d/rp</td><td>0.09&ndash;0.89 &rarr; 0.25&ndash;0.89</td></tr>
+          <tr class="keep"><td>80T and 72T hole count</td><td>24, unchanged</td></tr>
+          <tr><td>24T &mdash; the label still binds</td><td>0.31&ndash;0.65, unchanged</td></tr>
+          <tr class="drop"><td>holes across the set</td><td>176 &rarr; 162</td></tr>
+        </table>
+        <p class="why">The fourteen holes dropped are all near-circles. The two biggest
+          wheels lose nothing and gain a usable range.</p>
+      </section>
+
+      <!-- 9 ------------------------------------------------------------ -->
       <section class="pane" data-pane="check">
         <h3>the check</h3>
-        <p class="lede">Two funnels running into each other is a fault no render, no
+        <p class="lede">Two funnels running into one another is a fault no render, no
           slicer and no bed check would report. The geometry stays a clean manifold, it
           fits the plate, it slices. It just draws badly. So the model proves the spacing
           on every render.</p>
@@ -339,37 +456,38 @@ for (s = nc_shapes)
     <span class="k">assert</span>(min_pitch(nc_hole_pts(s)) &gt;= pen_pitch_min(),
            str(s[0], ": pen holes still crowd after thinning"));</pre>
         <p class="why">An assertion that has never failed is not evidence of anything, so
-          it was made to fail on purpose &mdash; squeeze the spiral and the 36 wheels and
-          three shapes are checked, and the smallest wheel is the first to go:</p>
+          it was made to fail on purpose &mdash; squeeze the spiral, and the smallest
+          wheel is the first to go:</p>
         <pre><span class="c">$ openscad -D "pen_spiral_dr=0.4" models/spirograph.scad</span>
 <span class="er">ERROR: Assertion '(min_pitch(wheel_hole_pts(t)) >= pen_pitch_min())' failed:</span>
-<span class="er">       "24T: pen holes are closer than their countersinks are wide"</span>
-<span class="er">       in file spirograph.scad, line 484</span></pre>
+<span class="er">       "24T: pen holes are closer than their countersinks are wide"</span></pre>
         <p class="why">This is the step the walkthrough on the main page calls
-          <b>verify</b>, and the reason it exists: the checks that matter for a part that
-          has to <i>work</i> are the ones you have to write yourself.</p>
+          <b>verify</b>, and the reason it exists: for a part that has to <i>work</i>, the
+          checks that matter are the ones you write yourself. Neither round of this job
+          would have been caught by anything downstream of CAD.</p>
       </section>
 
-      <!-- 7 ------------------------------------------------------------ -->
+      <!-- 10 ----------------------------------------------------------- -->
       <section class="pane" data-pane="proof">
         <h3>the proof</h3>
-        <p class="lede">Everything below ran after the change, on this machine.</p>
+        <p class="lede">Everything below ran after both rounds, on this machine.</p>
         <div class="ba">
-          <figure class="before">
-            <span class="tag">before</span>
-            <img src="assets/wheel-before.png" alt="36 tooth wheel with narrow straight-walled pen holes">
-            <figcaption>36T, 2.4&nbsp;mm holes, square rims.</figcaption>
+          <figure>
+            <span class="tag t-was">before</span>
+            <img src="assets/wheel-orig.png" alt="36 tooth wheel, 4 mm thick, with narrow straight-walled pen holes">
+            <figcaption>36T &mdash; 4&nbsp;mm plate, 2.4&nbsp;mm holes, square rims,
+              11&nbsp;holes.</figcaption>
           </figure>
-          <figure class="after">
-            <span class="tag">after</span>
-            <img src="assets/wheel-after.png" alt="36 tooth wheel with wider countersunk pen holes showing a funnel around each">
-            <figcaption>36T, 3.0&nbsp;mm holes, countersunk. Same camera, same wheel.</figcaption>
+          <figure>
+            <span class="tag t-now">after</span>
+            <img src="assets/wheel-thin.png" alt="36 tooth wheel, 2.5 mm thick, with wider countersunk pen holes">
+            <figcaption>36T &mdash; 2.5&nbsp;mm plate, 3.0&nbsp;mm countersunk holes,
+              10&nbsp;holes. Same camera.</figcaption>
           </figure>
         </div>
         <div class="grid2" style="margin-top:16px">
-          <pre><span class="c">$ python -m cadloop.gearcheck</span>
+          <pre><span class="c">$ python models/verify_spirograph.py</span>
 24T         24     0.000000  <span class="ok">pass</span>
-30T         30     0.000000  <span class="ok">pass</span>
 <span class="c">                  ...</span>
 80T         80     0.000000  <span class="ok">pass</span>
 ellipse     27     0.000000  <span class="ok">pass</span>
@@ -381,16 +499,20 @@ trefoil     23     0.000000  <span class="ok">pass</span>
           <table class="kv" style="margin-top:0">
             <tr><td>full sheet renders</td><td style="color:var(--good)">manifold, NoError</td></tr>
             <tr><td>parts meshing</td><td style="color:var(--good)">14 / 14</td></tr>
-            <tr><td>sheet collisions</td><td style="color:var(--good)">none</td></tr>
             <tr><td>spacing assertions</td><td style="color:var(--good)">pass, and proven to fail</td></tr>
-            <tr><td>files touched</td><td>1</td></tr>
-            <tr><td>diff</td><td>+78 &minus;27</td></tr>
+            <tr><td>test suite</td><td style="color:var(--good)">170 passed</td></tr>
+            <tr><td>plates, all proven on the bed</td><td style="color:var(--good)">5 / 5</td></tr>
+            <tr><td>print time, whole set</td><td>10.7 h</td></tr>
           </table>
         </div>
-        <p class="why">Not checked, and not checkable from here: whether 3.0&nbsp;mm is
-          right for <b>your</b> pen on <b>your</b> printer. That needs one wheel printed.
-          If it still binds, raise <code>pen_hole_d</code> &mdash; the hole count, the rim
-          clearance and the thinning all follow it.</p>
+        <p class="why">Sliced for a Creality Ender-3 V3 SE, 0.4 nozzle, PLA. Every
+          extruding move in all five G-code files was read back and confirmed inside the
+          printable area. <code>plate_2</code> sits 2.2&nbsp;mm from the bed edge and
+          wants a brim.</p>
+        <p class="why warn">Not checked, and not checkable from here: whether
+          2.5&nbsp;mm and 3.0&nbsp;mm suit <b>your</b> pen. That needs one wheel printed
+          and a caliper. Both are single numbers, and the hole count, rim clearance,
+          thinning and pattern range all follow them.</p>
       </section>
 
     </main>
@@ -399,20 +521,23 @@ trefoil     23     0.000000  <span class="ok">pass</span>
   <footer>
     <span><b>models/spirograph.scad</b> &middot; module 1.5 involute set</span>
     <span class="spacer"></span>
-    <span>renders are OpenSCAD exports of the actual before and after source</span>
+    <span>renders are OpenSCAD exports of the real source at each stage</span>
   </footer>
 </div>
 
 <script>
-  var order = ['report','bore','cs','crowd','thin','check','proof'];
+  // Panes are matched by name rather than by index, so adding a step to the
+  // rail cannot silently shift every pane after it out of step.
   var steps = document.querySelectorAll('.step');
   var panes = document.querySelectorAll('.pane');
-  steps.forEach(function (btn, i) {
+  steps.forEach(function (btn) {
     btn.addEventListener('click', function () {
-      steps.forEach(function (b) { b.setAttribute('aria-current', 'false'); });
-      btn.setAttribute('aria-current', 'true');
+      var want = btn.dataset.pane;
+      steps.forEach(function (b) {
+        b.setAttribute('aria-current', b === btn ? 'true' : 'false');
+      });
       panes.forEach(function (p) {
-        p.setAttribute('data-on', p.dataset.pane === order[i] ? '1' : '0');
+        p.setAttribute('data-on', p.dataset.pane === want ? '1' : '0');
       });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -422,6 +547,6 @@ trefoil     23     0.000000  <span class="ok">pass</span>
   <script src="https://cdn.jsdelivr.net/npm/tyrekick@0.5/dist/tyrekick.js"
           data-webhook="https://tyrekick-cadloop-pen-holes.richard-fortune.workers.dev/feedback"
           data-project-name="cadloop-pen-holes"
-          data-app-version="ad4709c"></script>
+          data-app-version="7b6cc54-dirty"></script>
 </body>
 </html>
