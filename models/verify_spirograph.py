@@ -1,4 +1,12 @@
-"""Two checks neither OpenSCAD nor the slicer can do.
+"""The spirograph's own checks. Not part of cadloop.
+
+This file is what cadloop cannot give you and does not pretend to: the
+question "does the thing actually work", asked in the only terms this
+particular model understands. It ships beside the model rather than inside
+the package, because every project's version of this question is different
+and none of them generalise. Yours will look nothing like this one.
+
+Two checks, neither of which OpenSCAD nor the slicer can do:
 
 Rolling interference: lays each wheel's pitch curve onto the ring's pitch
 circle, walks a full circuit, and measures any overlap between the two
@@ -9,12 +17,20 @@ the union against the sum. A sheet that fuses two parts together still
 renders as a clean manifold, slices without complaint, and prints as one
 object, so nothing downstream catches it.
 
-Needs shapely:  pip install "cadloop[verify]"
+Worth saying what it does NOT check, since that is the more useful lesson:
+it reported 14/14 parts meshing cleanly through five rounds of a pen hole
+nobody could draw with. Interference is not usability. The checks you need
+are discovered by holding the printed part, and they get written here.
+
+    python models/verify_spirograph.py
+
+Needs shapely and cadloop:  pip install -e ".[verify]"
 The layout check also needs OpenSCAD, and skips if there is none.
 """
 
 import argparse
 import math
+import re
 import os
 import tempfile
 from pathlib import Path
@@ -23,7 +39,7 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union
 from shapely import affinity
 
-from .common import find_binary, measure_stl, run as _sh
+from cadloop.common import find_binary, measure_stl, run as _sh
 M = float(os.environ.get("GEAR_MODULE", "1.5"))
 PA = 20.0
 CLEAR = 0.25
@@ -426,12 +442,26 @@ def check_layout(scad: Path, timeout_s: int = 240) -> dict:
 
 
 def _find_model() -> Path | None:
-    """The model ships in the repo, not in the wheel, so look for it
-    relative to the working directory."""
-    for c in (Path("models/spirograph.scad"), Path("spirograph.scad")):
+    """Beside this file first, since the two live together, then relative to
+    wherever it was run from."""
+    for c in (Path(__file__).resolve().parent / "spirograph.scad",
+              Path("models/spirograph.scad"), Path("spirograph.scad")):
         if c.is_file():
             return c.resolve()
     return None
+
+
+def check_wheel_list(model: Path) -> dict[str, Any]:
+    """WHEELS above is a second copy of the model's wheel_teeth, kept because
+    the checks run without OpenSCAD. Two copies drift, and a drifted list
+    quietly checks parts the sheet no longer has. This is what notices."""
+    m = re.search(r"^wheel_teeth\s*=\s*\[([^\]]*)\]", model.read_text(), re.M)
+    if not m:
+        return {"pass": False, "reason": "no wheel_teeth in the model"}
+    from_scad = [int(n) for n in re.findall(r"\d+", m.group(1))]
+    ok = from_scad == list(WHEELS)
+    return {"pass": ok, "model": from_scad, "here": list(WHEELS),
+            "reason": "" if ok else f"{from_scad} in the model, {list(WHEELS)} here"}
 
 
 def main() -> int:
@@ -453,6 +483,15 @@ def main() -> int:
         return 0
 
     bad = 0
+
+    # Before anything else: the two copies of the wheel list must agree, or
+    # every result below is about a set of parts the sheet no longer has.
+    model_for_list = args.model or _find_model()
+    if model_for_list is not None:
+        wl = check_wheel_list(model_for_list)
+        if not wl["pass"]:
+            bad += 1
+            print(f"wheels   FAIL  {wl['reason']}\n")
 
     if not args.skip_mesh:
         rows = check_all()

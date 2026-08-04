@@ -29,7 +29,7 @@ OpenSCAD and Creality Print installed. Nothing is illustrative.
 - The bed numbers come from `check_bed_fit` against Creality Print's stock
   `Creality K1 0.4 nozzle.json`, and `469 of 473` is a sweep over every machine
   profile that ships with it.
-- The two gear drawings are Shapely geometry from `cadloop.gearcheck`, exported
+- The two gear drawings are Shapely geometry from `models/verify_spirograph.py`, exported
   straight to SVG. The red is the actual intersection of the two solids at the
   worst point of the circuit.
 

@@ -49,12 +49,28 @@ channel_d     = 1.4;
 // before adding a count: lobes are ring / gcd(ring, wheel), so a wheel sharing
 // most of its factors with the ring draws something plain.
 wheel_teeth     = [24, 30, 32, 36, 40, 45, 52, 56, 63, 72, 80];
-wheel_thickness = 4;
-pen_hole_d      = 2.4;   // suits a 0.5 to 0.7 mm gel pen. Measure yours
+// Thickness is what decides whether the nib reaches the paper. A pen is a
+// cone: the bore has to clear not the tip but the pen's width a plate's
+// thickness back from it, and at 4 mm that is the barrel, so the pen bottoms
+// out and hovers. 2.5 is near a shop-bought wheel. Thinner still if your pen
+// needs it: measure the pen 2 mm back from the nib and keep that under
+// pen_hole_d. Nothing about hole spacing depends on this, so it costs no holes.
+wheel_thickness = 2.5;
+pen_hole_d      = 3.0;   // bore. 2.4 measured too tight once printed. Measure yours
 pen_hole_edge   = 3.0;   // material left outside the outermost hole
-pen_r0          = 5.5;   // first hole, leaves room for the tooth count
+pen_r0          = 5.5;   // floor for the first hole, clears the tooth count
+// ...but never nearer the middle than this much of the pitch radius. A fixed
+// 5.5 is a third of the way out on the 24, and a useless twelfth on the 80,
+// where the first holes drew cramped little circles worth none of the plate.
+pen_r0_frac     = 0.25;
 pen_spiral_dr   = 1.4;   // radial step between successive holes
 pen_max_holes   = 24;    // cap, so the big wheels stay strong
+pen_cs_rim      = 0.5;   // countersink flare per side, on the top face
+// Depth as a fraction of the plate, not a fixed number: a fixed one read as
+// too shallow at 4 mm and again at 2.5. Only the flare above costs hole
+// spacing, so depth is free and worth spending. 0.6 leaves the rest of the
+// plate as parallel bore to steady the pen.
+pen_cs_frac     = 0.6;
 
 /* [Hole labelling] */
 // Every hole is numbered, counting outward from the centre.
@@ -224,27 +240,39 @@ module ring() {
 
 GOLDEN = 137.50776;
 
+// The figure a hole draws is set by how far out it sits as a fraction of the
+// pitch radius, not by its distance in millimetres: near the middle it traces
+// something close to a circle whatever the wheel. So the innermost hole is
+// placed by whichever constraint binds, the label in the middle or that
+// fraction, which keeps every hole on every wheel inside the range that
+// actually draws something.
+function pen_r_min(n) = max(pen_r0, pen_r0_frac * gear_module * n / 2);
 function pen_r_max(n) = root_r(n) - pen_hole_edge - pen_hole_d / 2;
 function pen_count(n) =
     max(1, min(pen_max_holes,
-               floor((pen_r_max(n) - pen_r0) / pen_spiral_dr) + 1));
+               floor((pen_r_max(n) - pen_r_min(n)) / pen_spiral_dr) + 1));
 function pen_radius(n, i) =
-    let (k = pen_count(n))
-    k < 2 ? pen_r0 : pen_r0 + (pen_r_max(n) - pen_r0) * i / (k - 1);
+    let (k = pen_count(n), a = pen_r_min(n))
+    k < 2 ? a : a + (pen_r_max(n) - a) * i / (k - 1);
 
-module pen_spiral(n) {
-    for (i = [0 : pen_count(n) - 1])
-        rotate(i * GOLDEN)
-            translate([pen_radius(n, i), 0])
-                circle(d = pen_hole_d, $fn = 24);
+// A straight bore with a funnel around the top, the way a shop-bought
+// spirograph is countersunk: the pen tip drops in instead of being aimed,
+// and it can lean without the printed rim catching on its shoulder.
+// Cut in 3D, so every wheel subtracts this rather than a flat circle.
+function pen_cs_depth() = pen_cs_frac * wheel_thickness;
+
+module pen_bore() {
+    cs = pen_cs_depth();
+    translate([0, 0, -0.5])
+        cylinder(d = pen_hole_d, h = wheel_thickness + 1, $fn = 24);
+    translate([0, 0, wheel_thickness - cs])
+        cylinder(d1 = pen_hole_d, d2 = pen_hole_d + 2 * pen_cs_rim,
+                 h = cs + 0.01, $fn = 24);
 }
 
-module wheel2d(n) {
-    difference() {
-        gear2d(n, 1.0, 1.0 + tip_clearance, backlash);
-        pen_spiral(n);
-    }
-}
+// Closest two hole centres may sit before their funnels meet. 0.8 mm of
+// material between them is two perimeters at a 0.4 mm nozzle.
+function pen_pitch_min() = pen_hole_d + 2 * pen_cs_rim + 0.8;
 
 module hole_labels(n) {
     for (i = [0 : pen_count(n) - 1])
@@ -257,7 +285,12 @@ module hole_labels(n) {
 
 module wheel(n) {
     difference() {
-        linear_extrude(wheel_thickness) wheel2d(n);
+        linear_extrude(wheel_thickness)
+            gear2d(n, 1.0, 1.0 + tip_clearance, backlash);
+        for (i = [0 : pen_count(n) - 1])
+            rotate(i * GOLDEN)
+                translate([pen_radius(n, i), 0])
+                    pen_bore();
         if (label_wheels)
             translate([0, 0, wheel_thickness - label_depth])
                 linear_extrude(label_depth + 0.1) {
@@ -323,22 +356,42 @@ function nc_tooth_pts(rho, bl) =
         [ pol(rr, flank(rs, rb, ht) + 1.5) ]
     );
 
+// The hole tables were laid out on a 2.5333 module grid, which at
+// gear_module 1.5 is 3.8 mm apart: closer than two countersinks fit. Walk
+// the table from its last entry back, keeping a hole only when it clears
+// everything kept so far, then restore the table's order so the numbering
+// still counts outward. Each ray is listed inner to outer, so working
+// backwards is what saves the outermost hole of a crowded ray. Widen
+// gear_module or narrow the bore and nothing is dropped.
+function rev(v) = [ for (i = [len(v) - 1 : -1 : 0]) v[i] ];
+
+function crowded(h, kept) =
+    len([ for (k = kept)
+            if (gear_module * norm([k[0] - h[0], k[1] - h[1]]) < pen_pitch_min())
+                1 ]) > 0;
+
+function thin(hs, i = 0, kept = []) =
+    i >= len(hs) ? kept
+                 : thin(hs, i + 1,
+                        crowded(hs[i], kept) ? kept : concat(kept, [hs[i]]));
+
+function nc_holes(sh) = rev(thin(rev(sh[6])));
+
 module nc_wheel(sh) {
-    m = gear_module;
+    m     = gear_module;
+    holes = nc_holes(sh);
     difference() {
         linear_extrude(wheel_thickness)
-            difference() {
-                union() {
-                    offset(delta = -m * (1 + tip_clearance)) nc_pitch(sh[1], sh[2]);
-                    for (t = sh[5])
-                        let (rho = t[3] * m, na = t[2])
-                            translate([ t[0] * m - rho * cos(na),
-                                        t[1] * m - rho * sin(na) ])
-                                rotate(na) polygon(nc_tooth_pts(rho, backlash));
-                }
-                for (h = sh[6])
-                    translate([ h[0] * m, h[1] * m ]) circle(d = pen_hole_d, $fn = 24);
+            union() {
+                offset(delta = -m * (1 + tip_clearance)) nc_pitch(sh[1], sh[2]);
+                for (t = sh[5])
+                    let (rho = t[3] * m, na = t[2])
+                        translate([ t[0] * m - rho * cos(na),
+                                    t[1] * m - rho * sin(na) ])
+                            rotate(na) polygon(nc_tooth_pts(rho, backlash));
             }
+        for (h = holes)
+            translate([ h[0] * m, h[1] * m ]) pen_bore();
         if (label_wheels)
             translate([ 0, 0, wheel_thickness - label_depth ])
                 linear_extrude(label_depth + 0.1) {
@@ -346,8 +399,8 @@ module nc_wheel(sh) {
                         text(str(sh[3]), size = 4.5,
                              halign = "center", valign = "center");
                     if (label_holes)
-                        for (i = [0 : len(sh[6]) - 1])
-                            translate([ sh[6][i][2] * m, sh[6][i][3] * m ])
+                        for (i = [0 : len(holes) - 1])
+                            translate([ holes[i][2] * m, holes[i][3] * m ])
                                 text(str(i + 1), size = hole_label_h,
                                      halign = "center", valign = "center");
                 }
@@ -435,6 +488,28 @@ echo(str("main ring bore diameter  : ",
          2 * gear_module * (ring_inner_teeth / 2 - 1), " mm"));
 echo(str("outer ring diameter      : ", 2 * tip_r(ring_outer_teeth), " mm"));
 echo(str("tooth height             : ", gear_module * (2 + tip_clearance), " mm"));
+echo(str("pen bore / countersink   : ", pen_hole_d, " / ",
+         pen_hole_d + 2 * pen_cs_rim, " mm"));
+
+// Two funnels that run into each other leave a groove the pen can wander
+// along, which spoils the drawing rather than just looking wrong. The
+// spiral spaces itself and the shape tables are thinned, but both depend
+// on numbers above, so prove it on every render instead of trusting it.
+function min_pitch(pts) =
+    len(pts) < 2 ? 1e9
+    : min([ for (i = [0 : len(pts) - 1], j = [0 : len(pts) - 1])
+                if (i < j) norm(pts[i] - pts[j]) ]);
+
+function wheel_hole_pts(n) =
+    [ for (i = [0 : pen_count(n) - 1]) pol(pen_radius(n, i), i * GOLDEN) ];
+function nc_hole_pts(sh) = [ for (h = nc_holes(sh)) gear_module * [h[0], h[1]] ];
+
+for (t = wheel_teeth)
+    assert(min_pitch(wheel_hole_pts(t)) >= pen_pitch_min(),
+           str(t, "T: pen holes are closer than their countersinks are wide"));
+for (s = nc_shapes)
+    assert(min_pitch(nc_hole_pts(s)) >= pen_pitch_min(),
+           str(s[0], ": pen holes still crowd after thinning"));
 
 if (is_num(part))              wheel(part);
 else if (part == "ring")       ring();

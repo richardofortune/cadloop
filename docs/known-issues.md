@@ -3,15 +3,22 @@
 Vendor quirks cadloop works around at runtime. Each is discovered by probing
 rather than asserted in code, so a fix upstream is picked up automatically.
 
-## Creality Print's CLI does not run headless on macOS
+## Creality Print's CLI does not run headless
 
-**Affects:** Creality Print 7.1.1.4472 on macOS 26, Apple Silicon
+**Affects:** Creality Print 7.1.1.4472 on macOS 26 Apple Silicon, and 7.2.0 on
+Windows 11. Not a macOS problem, and not fixed by 7.2.0.
 **Upstream:** https://github.com/CrealityOfficial/CrealityPrint/issues/574
 
 Every CLI operation except `--help` segfaults, including `--info` on a plain
 STL with no profiles loaded. It dies in `Slic3r::GUI::PartPlate::set_shape`
 called from `Slic3r::CLI::run`, a null dereference in GUI bed setup that the
 headless path never initialises.
+
+The upstream issue is titled as a 3MF input problem and was first reported
+against macOS. It is neither: the crash does not depend on the input format,
+and a second reporter reproduced it on Windows against a later build. Read the
+title narrowly and you would conclude a different platform or a newer version
+avoids it, which is what makes this worth writing down.
 
 cadloop probes each installed slicer with `--help` and proves it with a test
 slice, so Creality Print simply fails to earn the job while another slicer is

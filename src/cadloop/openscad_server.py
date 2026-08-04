@@ -35,6 +35,7 @@ DEFAULT_TIMEOUT = int(os.environ.get("OPENSCAD_TIMEOUT", "300"))
 MESH_FORMATS = {"stl", "off", "amf", "3mf", "nef3"}
 FLAT_FORMATS = {"dxf", "svg"}
 TEXT_FORMATS = {"csg", "echo", "ast", "term"}
+IMAGE_FORMATS = {"png"}
 
 mcp = FastMCP("openscad")
 
@@ -109,6 +110,23 @@ def _defines(d: dict[str, Any] | None) -> list[str]:
     for k, v in (d or {}).items():
         out += ["-D", f"{k}={_literal(v)}"]
     return out
+
+
+def _view_args(camera: str | None, imgsize: str, projection: str,
+               colorscheme: str, full_render: bool, viewall: bool) -> list[str]:
+    """The camera half of an image run, shared by preview and render.
+
+    Written once because the two differ only in where the PNG ends up: one
+    hands it back to the caller, the other leaves it in the workspace."""
+    args = ["--imgsize", imgsize, "--projection", projection,
+            "--colorscheme", colorscheme]
+    if camera:
+        args += ["--camera", camera]
+    elif viewall:
+        args += ["--viewall", "--autocenter"]
+    if full_render:
+        args += ["--render"]
+    return args
 
 
 def _input(stack: ExitStack, file: str | None, source: str | None) -> Path:
@@ -217,21 +235,43 @@ def echo(file: str | None = None, source: str | None = None,
 def render(output: str, file: str | None = None, source: str | None = None,
            defines: dict[str, Any] | None = None,
            timeout_s: int | None = None,
-           measure: bool = True) -> dict[str, Any]:
-    """Render a script to a mesh or 2D file in the workspace. The format is
-    taken from the output extension: stl, off, amf, 3mf, dxf, svg, csg.
+           measure: bool = True,
+           camera: str | None = None,
+           imgsize: str = "800,600",
+           projection: str = "o",
+           colorscheme: str = "Tomorrow",
+           full_render: bool = False,
+           viewall: bool = True) -> dict[str, Any]:
+    """Render a script to a file in the workspace. The format is taken from
+    the output extension: stl, off, amf, 3mf, dxf, svg, csg, png.
 
     Returns the manifold report OpenSCAD prints (simple, volumes, facets),
-    plus bounding box and volume when the output is an STL."""
+    plus bounding box and volume when the output is an STL.
+
+    A png output keeps the picture instead of handing it back, which is what
+    preview does. Use render when the image is the artefact — a before and
+    after pair, a figure for a page — and preview when you only want to look.
+    The view options below apply to png alone and mean what they mean in
+    preview: camera is OpenSCAD's own string, seven numbers for gimbal style
+    (translate x,y,z, rotate x,y,z, distance) or six for eye then centre.
+    Leave camera unset and viewall frames the model. projection is "o" for
+    orthogonal or "p" for perspective. full_render evaluates the real
+    geometry rather than the preview approximation: slower, but it shows what
+    would export, which matters for anything cut or differenced."""
     ext = Path(output).suffix.lstrip(".").lower()
-    if ext not in MESH_FORMATS | FLAT_FORMATS | TEXT_FORMATS:
+    if ext not in MESH_FORMATS | FLAT_FORMATS | TEXT_FORMATS | IMAGE_FORMATS:
         raise ValueError(f"unsupported output format: {ext}")
+    image = ext in IMAGE_FORMATS
     with ExitStack() as stack:
         src = _input(stack, file, source)
         dst = _safe(output)
         dst.parent.mkdir(parents=True, exist_ok=True)
-        r = _run(["-o", str(dst), str(src)] + _defines(defines),
-                 timeout_s=timeout_s)
+        args = ["-o", str(dst), str(src)]
+        if image:
+            args += _view_args(camera, imgsize, projection, colorscheme,
+                               full_render, viewall)
+        # PNG export wants a GL context; the mesh path never does.
+        r = _run(args + _defines(defines), display=image, timeout_s=timeout_s)
         parsed = _parse(r["log"])
         res: dict[str, Any] = {
             "ok": r["returncode"] == 0 and dst.exists() and not parsed["errors"],
@@ -292,15 +332,10 @@ def preview(file: str | None = None, source: str | None = None,
         src = _input(stack, file, source)
         out = stack.enter_context(
             tempfile.NamedTemporaryFile(suffix=".png", delete=True))
-        args = ["-o", out.name, str(src), "--imgsize", imgsize,
-                "--projection", projection, "--colorscheme", colorscheme]
-        if camera:
-            args += ["--camera", camera]
-        elif viewall:
-            args += ["--viewall", "--autocenter"]
-        if full_render:
-            args += ["--render"]
-        args += _defines(defines)
+        args = (["-o", out.name, str(src)]
+                + _view_args(camera, imgsize, projection, colorscheme,
+                             full_render, viewall)
+                + _defines(defines))
         r = _run(args, display=True, timeout_s=timeout_s)
         data = Path(out.name).read_bytes()
         if not data:

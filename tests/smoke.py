@@ -135,6 +135,23 @@ async def test_openscad(ws: Path) -> None:
                           {"file": "box.scad", "output": "box.stl"}))
             check("render writes an stl", got["ok"] and got["bytes"] > 0)
 
+            # preview hands the picture back; render has to leave it behind,
+            # which is the only way to build a page out of several of them.
+            got = payload(await s.call_tool("render",
+                          {"file": "box.scad", "output": "box.png",
+                           "camera": "0,0,0,55,0,25,120", "imgsize": "240,180"}))
+            png = ws / "box.png"
+            head = png.read_bytes()[:24] if png.exists() else b""
+            # Width and height live in the IHDR at bytes 16..24. Reading them
+            # back proves imgsize reached OpenSCAD, so a png that quietly
+            # ignored the view options fails here rather than looking fine.
+            size = (int.from_bytes(head[16:20], "big"),
+                    int.from_bytes(head[20:24], "big")) if head else (0, 0)
+            check("render keeps a png, framed as asked",
+                  got["ok"] and got["bytes"] > 0
+                  and head[:8] == b"\x89PNG\r\n\x1a\n" and size == (240, 180),
+                  str(got.get("errors") or size))
+
             res = await s.call_tool("preview", {"file": "box.scad"})
             check("preview returns an image", len(images(res)) == 1)
 
@@ -420,31 +437,9 @@ async def test_slicer(ws: Path) -> None:
                   set(p.name for p in (ws / "out").iterdir()) == before)
 
 
-def test_model() -> None:
-    """The verifier keeps its own copy of the wheel list, because it has to
-    work from a wheel install where the model is not present. Two copies
-    drift, so this is the thing that notices."""
-    print("model")
-    scad = ROOT / "models" / "spirograph.scad"
-    if not scad.is_file():
-        print("  skip  no spirograph.scad in this checkout")
-        return
-    m = re.search(r"^wheel_teeth\s*=\s*\[([^\]]*)\]", scad.read_text(), re.M)
-    if not m:
-        check("wheel_teeth found in the model", False)
-        return
-    from_scad = [int(n) for n in re.findall(r"\d+", m.group(1))]
-    try:
-        from cadloop.gearcheck import WHEELS
-    except ImportError:
-        print("  skip  shapely not installed, cannot compare wheel lists")
-        return
-    check("the verifier's wheel list matches the model's",
-          from_scad == list(WHEELS), f"{from_scad} vs {list(WHEELS)}")
-
-
 async def main() -> int:
-    test_model()
+    # Nothing here knows about the spirograph. cadloop's tests exercise
+    # cadloop; the example checks itself, in models/verify_spirograph.py.
     with tempfile.TemporaryDirectory() as tmp:
         # Resolved: the servers resolve their workspace and their profile
         # roots, and on macOS /var is a symlink to /private/var, so an

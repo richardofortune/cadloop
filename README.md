@@ -6,10 +6,14 @@
 A closed loop from parametric source to G-code, with the verification step in
 the middle that neither the CAD tool nor the slicer can do.
 
-Two MCP servers and a checker. A model writes OpenSCAD, compiles it, reads
-computed values back out, looks at a render, proves the parts actually work,
-checks they fit the bed, slices them and pulls out the G-code. No GUI at any
+Two MCP servers. A model writes OpenSCAD, compiles it, reads computed values
+back out, looks at a render, checks it fits the bed, slices it and pulls out
+the G-code, with every plate proven against the printable area. No GUI at any
 point.
+
+The verify step in the middle is yours to write. cadloop makes everything
+around it cheap enough that you get to run it often; it cannot tell you
+whether the part works.
 
 ![A walkthrough of the loop, ending on the verifier catching a wheel that jams](https://raw.githubusercontent.com/richardofortune/cadloop/main/docs/walkthrough/out/cadloop-hero.gif)
 
@@ -29,7 +33,7 @@ from is in
       |
    preview        look at it
       |
-   verify         does it actually work  <- the part tooling usually skips
+   verify         does it actually work  <- yours; nothing here does it for you
       |
    measure        bounding box and volume
       |
@@ -51,11 +55,12 @@ did in a screen of text. See [the worked example](#the-worked-example).
 ## Install
 
 ```console
-pip install "cadloop[verify]"
+pip install cadloop
 ```
 
-Or from a checkout, which is what you want if you intend to run the worked
-example or the tests:
+The only dependency is `mcp`. Or from a checkout, which is what you want if you
+intend to run the worked example or the tests — the `verify` extra is shapely,
+needed by the example's own checker rather than by cadloop:
 
 ```console
 git clone https://github.com/richardofortune/cadloop
@@ -96,6 +101,13 @@ workspace file access. `preview` returns the PNG as an MCP image, so the model
 can look at what it built rather than inferring from numbers. `render` returns
 OpenSCAD's manifold report alongside a bounding box and volume, where
 `simple: yes` with a sensible volume count is the signal the mesh is printable.
+
+The two split on what happens to the picture. `preview` hands it back and keeps
+nothing; `render` writes it to the workspace when the output ends in `.png`,
+taking the same camera, `imgsize`, `projection` and `full_render` options. Use
+`render` when the image is the artefact rather than the answer. Since `render`
+also takes `source` as text rather than a path, the before half of a comparison
+is `git show <rev>:model.scad` piped straight in — no checkout, no temp file.
 
 **slicer** exposes `setup_printer`, `machine_info`, `make_printable`,
 `slicer_info`, `list_profiles`, `check_bed_fit`, `slice_model`,
@@ -151,15 +163,20 @@ chain, and those report `ok: null` with a reason rather than guessing.
 
 ## The verification step
 
-`cadloop-verify` is the reference example of the third thing you need, and the
-one no general tool provides. It runs two checks. For the spirograph the first
+This is the part cadloop does not do for you, and the reason it is a worked
+example rather than a feature. `models/verify_spirograph.py` ships beside the
+model, not inside the package: every project's version of "does it actually
+work" is different, and none of them generalise. Yours will look nothing like
+this one.
+
+It runs two checks. For the spirograph the first
 lays each wheel's pitch curve onto the ring's pitch circle, walks a full
 circuit, and measures overlap between the two solids at every position. Zero
 overlap across the whole circuit at some meshing phase is the pass condition.
 The second checks the parts are not laid on top of each other on the sheet.
 
 ```console
-$ cadloop-verify
+$ python models/verify_spirograph.py
 part     teeth  overlap mm2  result
 24T         24     0.000000  pass
 ...
@@ -189,11 +206,11 @@ skips without one; `--skip-layout` and `--skip-mesh` run one half alone.
 
 A pen in a wheel of `r` teeth rolling in a ring of `R` traces a figure with
 `R / gcd(R, r)` lobes, closing after `r / gcd(R, r)` circuits. The pattern is
-settled by the tooth counts before any geometry exists, so `cadloop-verify
---patterns` reads it straight off the set:
+settled by the tooth counts before any geometry exists, so the checker's
+`--patterns` mode reads it straight off the set:
 
 ```console
-$ cadloop-verify --patterns
+$ python models/verify_spirograph.py --patterns
 
 main ring, 96 teeth
       part  teeth  lobes  circuits
