@@ -366,8 +366,8 @@ function <span class="k">nc_holes</span>(sh) = rev(thin(rev(sh[6])));</pre>
           <figure>
             <span class="tag t-now">round two</span>
             <img src="assets/sec-thin.png" alt="3 mm bore through a 2.5 mm plate with a 0.6 mm funnel">
-            <figcaption>Same bore, <b>2.5&nbsp;mm</b> of plate. The pen has
-              1.5&nbsp;mm less of itself to force through.</figcaption>
+            <figcaption>Same bore, <b>2.5&nbsp;mm</b> of plate, and the funnel now runs
+              1.5&nbsp;mm of that. The pen has far less of itself to force through.</figcaption>
           </figure>
         </div>
       </section>
@@ -381,11 +381,11 @@ function <span class="k">nc_holes</span>(sh) = rev(thin(rev(sh[6])));</pre>
         <pre><span class="del">-wheel_thickness = 4;</span>
 <span class="add">+wheel_thickness = 2.5;</span>
 <span class="del">-pen_cs_depth    = 1.0;   // how deep the funnel cuts</span>
-<span class="add">+pen_cs_depth    = 0.6;   // how deep the funnel cuts. Scaled with the plate</span></pre>
+<span class="add">+pen_cs_frac     = 0.6;   // ...as a fraction of the plate, so 1.5 mm here</span></pre>
         <table class="kv">
           <tr><td>plate</td><td>4.0 &rarr; 2.5 mm</td></tr>
-          <tr><td>funnel depth</td><td>1.0 &rarr; 0.6 mm</td></tr>
-          <tr><td>straight bore left to guide the pen</td><td>1.9 mm</td></tr>
+          <tr><td>funnel depth</td><td>1.0 &rarr; 1.5 mm</td></tr>
+          <tr><td>straight bore left to guide the pen</td><td>1.0 mm</td></tr>
           <tr class="keep"><td>holes lost to this change</td><td>none</td></tr>
           <tr class="keep"><td>ring, and its 7 mm toothed bore</td><td>untouched</td></tr>
           <tr><td>whole set, print time</td><td>13.0 &rarr; 10.7 h</td></tr>
